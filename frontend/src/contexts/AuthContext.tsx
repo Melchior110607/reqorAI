@@ -25,13 +25,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const token = localStorage.getItem('access_token');
+      // Check both 'access_token' and 'token' (OAuth success uses 'token')
+      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
       if (token) {
+        // Normalize to 'access_token'
+        if (localStorage.getItem('token') && !localStorage.getItem('access_token')) {
+          localStorage.setItem('access_token', token);
+          localStorage.removeItem('token');
+        }
         const userData = await authAPI.getCurrentUser();
         setUser(userData);
       }
     } catch (error) {
       localStorage.removeItem('access_token');
+      localStorage.removeItem('token');
     } finally {
       setLoading(false);
     }
@@ -60,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('token');
     setUser(null);
   };
 

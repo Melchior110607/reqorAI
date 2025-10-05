@@ -20,3 +20,4 @@ class Client(Base):
     # Relations
     user = relationship("User", back_populates="clients")
     requests = relationship("Request", back_populates="client", cascade="all, delete-orphan")
+    email_rules = relationship("ClientEmailRule", back_populates="client", cascade="all, delete-orphan")

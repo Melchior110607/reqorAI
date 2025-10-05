@@ -4,17 +4,27 @@ A modern web application for managing B2B requests between companies, built with
 
 ## Features
 
+### Core Features
 - **User Authentication**: JWT-based authentication with registration and login
 - **Dashboard**: Overview of all requests with statistics and priority items
 - **Request Management**: 
   - Outgoing requests (requests sent to clients)
   - Incoming requests (requests received from clients)
-  - Status tracking (pending, in progress, completed, cancelled, overdue)
+  - Status tracking (pending, completed, overdue)
   - Priority system with visual indicators
   - Due dates and reminder frequencies
+  - Detailed request views with editing capabilities
 - **Client Management**: Add, edit, and manage business clients
 - **User Profile**: Account information and activity history
 - **Modern UI**: Responsive design with Tailwind CSS
+
+### AI-Powered Features
+- **Email Integration**: Connect Gmail and Outlook accounts
+- **Automatic Email Processing**: Real-time email interception and processing
+- **Client Recognition**: Advanced algorithm to match emails to existing clients
+- **AI Classification**: GPT-4 powered email classification and analysis
+- **Smart Actions**: Automatic request updates based on email content
+- **Reminder System**: Automated email reminders for outgoing requests
 
 ## Tech Stack
 
@@ -24,6 +34,11 @@ A modern web application for managing B2B requests between companies, built with
 - **PostgreSQL**: Database
 - **JWT**: Authentication
 - **Pydantic**: Data validation
+- **OpenAI GPT-4**: AI classification and analysis
+- **Gmail API**: Email integration
+- **Microsoft Graph API**: Outlook integration
+- **Redis**: Caching and background jobs
+- **Celery**: Asynchronous task processing
 
 ### Frontend
 - **Next.js 14**: React framework with App Router
@@ -140,6 +155,13 @@ projectAI/
 - `JWT_SECRET`: Secret key for JWT tokens
 - `JWT_ALGORITHM`: JWT algorithm (default: HS256)
 - `JWT_EXPIRATION_HOURS`: Token expiration time (default: 24)
+- `OPENAI_API_KEY`: OpenAI API key for AI classification
+- `GMAIL_CLIENT_ID`: Gmail OAuth client ID
+- `GMAIL_CLIENT_SECRET`: Gmail OAuth client secret
+- `OUTLOOK_CLIENT_ID`: Outlook OAuth client ID
+- `OUTLOOK_CLIENT_SECRET`: Outlook OAuth client secret
+- `REDIS_URL`: Redis connection string
+- `BASE_URL`: Base URL for OAuth callbacks
 
 ### Frontend
 - `NEXT_PUBLIC_API_URL`: Backend API URL (default: http://localhost:8000)

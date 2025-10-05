@@ -1,0 +1,198 @@
+import base64
+import json
+from typing import Dict, Any, Optional, List
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from sqlalchemy.orm import Session
+from app.models.email_connection import EmailConnection, EmailProvider, ConnectionStatus
+from app.database.config import settings
+from sqlalchemy.sql import func
+
+class GmailService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.scopes = [
+            'https://www.googleapis.com/auth/gmail.readonly',
+            'https://www.googleapis.com/auth/gmail.modify',
+            'https://mail.google.com/'
+        ]
+
+    def get_auth_url(self, user_id: int) -> str:
+        """Génère l'URL d'authentification Gmail"""
+        if not settings.gmail_client_id or not settings.gmail_client_secret:
+            raise Exception("Gmail OAuth credentials not configured")
+        
+        # Déterminer l'URL de callback selon le type d'authentification
+        if user_id == -1:
+            # Authentification principale
+            callback_url = f"{settings.base_url}/auth/oauth/callback/google"
+        else:
+            # Ajout de canal email
+            callback_url = f"{settings.base_url}/email/callback/gmail"
+            
+        client_config = {
+            "web": {
+                "client_id": settings.gmail_client_id,
+                "client_secret": settings.gmail_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [callback_url]
+            }
+        }
+        
+        flow = Flow.from_client_config(client_config, scopes=self.scopes)
+        flow.redirect_uri = callback_url
+        
+        auth_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            state=str(user_id),
+            prompt='consent'  # Force consent screen pour refresh token
+        )
+        
+        return auth_url
+
+    def handle_oauth_callback(self, code: str, state: str) -> EmailConnection:
+        """Gère le callback OAuth et crée la connexion"""
+        user_id = int(state)
+        
+        client_config = {
+            "web": {
+                "client_id": settings.gmail_client_id,
+                "client_secret": settings.gmail_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [f"{settings.base_url}/api/email/callback/gmail"]
+            }
+        }
+        
+        flow = Flow.from_client_config(client_config, scopes=self.scopes)
+        flow.redirect_uri = f"{settings.base_url}/api/email/callback/gmail"
+        
+        # Échanger le code contre des tokens
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        # Obtenir l'adresse email de l'utilisateur
+        service = build('gmail', 'v1', credentials=credentials)
+        profile = service.users().getProfile(userId='me').execute()
+        email_address = profile['emailAddress']
+        
+        # Créer ou mettre à jour la connexion
+        connection = self.db.query(EmailConnection).filter(
+            EmailConnection.user_id == user_id,
+            EmailConnection.provider == EmailProvider.GMAIL,
+            EmailConnection.email_address == email_address
+        ).first()
+        
+        if not connection:
+            connection = EmailConnection(
+                user_id=user_id,
+                provider=EmailProvider.GMAIL,
+                email_address=email_address
+            )
+            self.db.add(connection)
+        
+        connection.access_token = credentials.token
+        connection.refresh_token = credentials.refresh_token
+        connection.expires_at = credentials.expiry
+        connection.status = ConnectionStatus.ACTIVE
+        
+        self.db.commit()
+        self.db.refresh(connection)
+        
+        return connection
+
+    def refresh_token(self, connection: EmailConnection) -> bool:
+        """Rafraîchit le token d'accès"""
+        try:
+            credentials = Credentials(
+                token=connection.access_token,
+                refresh_token=connection.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.gmail_client_id,
+                client_secret=settings.gmail_client_secret
+            )
+            
+            credentials.refresh(GoogleRequest())
+            
+            connection.access_token = credentials.token
+            connection.expires_at = credentials.expiry
+            connection.status = ConnectionStatus.ACTIVE
+            
+            self.db.commit()
+            return True
+            
+        except Exception as e:
+            connection.status = ConnectionStatus.ERROR
+            self.db.commit()
+            return False
+
+    def get_recent_emails(self, connection: EmailConnection, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Récupère les emails récents"""
+        try:
+            credentials = Credentials(
+                token=connection.access_token,
+                refresh_token=connection.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.gmail_client_id,
+                client_secret=settings.gmail_client_secret
+            )
+            
+            service = build('gmail', 'v1', credentials=credentials)
+            
+            # Récupérer la liste des messages
+            results = service.users().messages().list(
+                userId='me',
+                maxResults=max_results,
+                q='in:inbox'
+            ).execute()
+            
+            messages = results.get('messages', [])
+            emails = []
+            
+            for message in messages:
+                # Récupérer le détail de chaque message
+                msg = service.users().messages().get(
+                    userId='me',
+                    id=message['id'],
+                    format='full'
+                ).execute()
+                
+                email_data = self._parse_gmail_message(msg)
+                emails.append(email_data)
+            
+            return emails
+            
+        except Exception as e:
+            print(f"Error fetching Gmail emails: {e}")
+            return []
+
+    def _parse_gmail_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse un message Gmail"""
+        headers = {h['name']: h['value'] for h in message['payload'].get('headers', [])}
+        
+        # Extraire le corps du message
+        body = ""
+        if 'parts' in message['payload']:
+            for part in message['payload']['parts']:
+                if part['mimeType'] == 'text/plain':
+                    if 'data' in part['body']:
+                        body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                        break
+        else:
+            if message['payload']['body'].get('data'):
+                body = base64.urlsafe_b64decode(message['payload']['body']['data']).decode('utf-8')
+        
+        return {
+            'id': message['id'],
+            'thread_id': message['threadId'],
+            'sender_email': headers.get('From', '').split('<')[-1].rstrip('>') if '<' in headers.get('From', '') else headers.get('From', ''),
+            'sender_name': headers.get('From', '').split('<')[0].strip() if '<' in headers.get('From', '') else '',
+            'subject': headers.get('Subject', ''),
+            'body': body,
+            'received_at': headers.get('Date', ''),
+            'attachments': []  # TODO: Implémenter extraction des pièces jointes
+        }

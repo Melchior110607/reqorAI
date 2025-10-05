@@ -10,6 +10,8 @@ import {
   ArrowDownLeft, 
   Users, 
   User,
+  Mail,
+  Brain,
   LogOut 
 } from 'lucide-react';
 
@@ -18,18 +20,14 @@ export function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
 
-  const handleLogout = async() => {
-    if (!confirm("Are you sure you want to logou?t")) return;
+  const handleLogout = async () => {
+    if (!confirm("Are you sure you want to logout?")) return;
     try {
-
-      logout()
+      logout();
       router.push('/login');
-
+    } catch (error) {
+      console.error('Error logging out:', error);
     }
-    catch (error) {
-      console.error('Error logging out :', error);
-    }
-    
   };
 
   const navItems = [
@@ -37,6 +35,8 @@ export function Navbar() {
     { href: '/outgoing-requests', label: 'Outgoing Requests', icon: ArrowUpRight },
     { href: '/incoming-requests', label: 'Incoming Requests', icon: ArrowDownLeft },
     { href: '/clients', label: 'Clients', icon: Users },
+    { href: '/email-settings', label: 'Email Settings', icon: Mail },
+    { href: '/ai-monitoring', label: 'AI Monitoring', icon: Brain },
     { href: '/profile', label: 'Profile', icon: User },
   ];
 
@@ -78,7 +78,7 @@ export function Navbar() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={()=>handleLogout}
+              onClick={handleLogout}
               className="text-gray-500 hover:text-gray-700"
             >
               <LogOut className="w-4 h-4 mr-2" />
