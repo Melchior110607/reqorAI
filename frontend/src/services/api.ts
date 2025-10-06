@@ -47,6 +47,11 @@ export const authAPI = {
     const response = await api.get('/auth/me');
     return response.data;
   },
+
+  updateCurrentUser: async (data: Partial<User>): Promise<User> => {
+    const response = await api.put('/auth/me', data);
+    return response.data;
+  },
 };
 
 // Clients API

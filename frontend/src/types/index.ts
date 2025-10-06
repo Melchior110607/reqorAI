@@ -20,6 +20,13 @@ export interface Client {
   user_id: number;
   created_at: string;
   updated_at: string;
+  email_rules?: Array<{
+    id: number;
+    rule_type: string;
+    pattern: string;
+    confidence_score: number;
+    is_active: boolean;
+  }>;
 }
 
 export enum RequestStatus {

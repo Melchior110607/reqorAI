@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ProtectedLayout } from '@/components/layout/ProtectedLayout';
 import { requestsAPI } from '@/services/api';
 import { RequestWithClient, RequestStatus, RequestType } from '@/types';
 import { 
@@ -69,16 +68,13 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <ProtectedLayout>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
         </div>
-      </ProtectedLayout>
     );
   }
 
   return (
-    <ProtectedLayout>
       <div className="px-4 py-6 sm:px-0">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
@@ -239,6 +235,5 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-    </ProtectedLayout>
   );
 }

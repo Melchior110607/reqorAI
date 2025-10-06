@@ -49,6 +49,9 @@ export interface InterceptedEmail {
   body: string;
   attachments?: string[];
   confidence_score: number;
+  matched_rule_id?: number;
+  rule_type?: string;
+  rule_pattern?: string;
   ai_classification: EmailClassification;
   ai_confidence: number;
   ai_reasoning?: string;

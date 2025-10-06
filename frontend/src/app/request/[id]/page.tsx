@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ProtectedLayout } from '@/components/layout/ProtectedLayout';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
@@ -219,24 +218,20 @@ ${request.user?.company_name || 'Your Company'}
 
   if (loading) {
     return (
-      <ProtectedLayout>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
         </div>
-      </ProtectedLayout>
     );
   }
 
   if (!request) {
     return (
-      <ProtectedLayout>
         <div className="text-center py-12">
           <p className="text-gray-500">Request not found</p>
           <Button onClick={() => router.back()} className="mt-4">
             Go Back
           </Button>
         </div>
-      </ProtectedLayout>
     );
   }
 
@@ -254,7 +249,6 @@ ${request.user?.company_name || 'Your Company'}
   ];
 
   return (
-    <ProtectedLayout>
       <div className="px-4 py-6 sm:px-0">
         {/* Header */}
         <div className="mb-8">
@@ -656,6 +650,5 @@ Your Company`}
           </div>
         </div>
       </div>
-    </ProtectedLayout>
   );
 }

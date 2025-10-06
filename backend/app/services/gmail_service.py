@@ -1,6 +1,8 @@
 import base64
 import json
 from typing import Dict, Any, Optional, List
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -186,6 +188,14 @@ class GmailService:
             if message['payload']['body'].get('data'):
                 body = base64.urlsafe_b64decode(message['payload']['body']['data']).decode('utf-8')
         
+        # Parser la date RFC 2822 en datetime Python
+        date_str = headers.get('Date', '')
+        try:
+            received_at = parsedate_to_datetime(date_str)
+        except Exception as e:
+            print(f"Error parsing date '{date_str}': {e}")
+            received_at = datetime.now()
+        
         return {
             'id': message['id'],
             'thread_id': message['threadId'],
@@ -193,6 +203,6 @@ class GmailService:
             'sender_name': headers.get('From', '').split('<')[0].strip() if '<' in headers.get('From', '') else '',
             'subject': headers.get('Subject', ''),
             'body': body,
-            'received_at': headers.get('Date', ''),
+            'received_at': received_at,  # Maintenant c'est un datetime Python
             'attachments': []  # TODO: Implémenter extraction des pièces jointes
         }

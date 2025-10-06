@@ -120,22 +120,24 @@ def delete_email_connection(
     
     return {"message": "Email connection deleted successfully"}
 
-@router.post("/sync/{connection_id}")
-def sync_emails(
-    connection_id: int,
+@router.post("/sync/{provider_name}")
+def sync_emails_by_provider_name(
+    provider_name: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Synchronise les emails d'une connexion"""
+    """Synchronise manuellement les emails - DEBUG"""
+    # Trouver la connexion de l'utilisateur pour ce provider
+    provider = EmailProvider.GMAIL if provider_name == 'gmail' else EmailProvider.OUTLOOK
     connection = db.query(EmailConnection).filter(
-        EmailConnection.id == connection_id,
-        EmailConnection.user_id == current_user.id
+        EmailConnection.user_id == current_user.id,
+        EmailConnection.provider == provider
     ).first()
     
     if not connection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email connection not found"
+            detail=f"Pas de connexion {provider_name} trouvée. Connectez-vous d'abord avec OAuth."
         )
     
     try:
@@ -158,16 +160,16 @@ def sync_emails(
         for email_data in emails:
             # Vérifier si l'email n'a pas déjà été traité
             existing = db.query(InterceptedEmail).filter(
-                InterceptedEmail.connection_id == connection_id,
+                InterceptedEmail.connection_id == connection.id,
                 InterceptedEmail.sender_email == email_data['sender_email'],
                 InterceptedEmail.subject == email_data['subject']
             ).first()
             
             if not existing:
-                processing_service.process_intercepted_email(email_data, connection_id, current_user.id)
+                processing_service.process_intercepted_email(email_data, connection.id, current_user.id)
                 processed_count += 1
         
-        return {"message": f"Synchronized {processed_count} new emails"}
+        return {"message": f"✅ {processed_count} nouveaux emails synchronisés!", "count": processed_count}
         
     except Exception as e:
         raise HTTPException(
@@ -180,19 +182,15 @@ def get_intercepted_emails(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Récupère les emails interceptés"""
-    query = db.query(
-        InterceptedEmail,
-        Client.name.label("client_name"),
-        Client.company.label("client_company")
-    ).outerjoin(Client).filter(
+    """Récupère TOUS les emails interceptés - DEBUG SIMPLE"""
+    
+    # Récupérer tous les emails de l'utilisateur, triés par date
+    emails = db.query(InterceptedEmail).filter(
         InterceptedEmail.user_id == current_user.id
-    ).order_by(InterceptedEmail.email_received_at.desc())
+    ).order_by(InterceptedEmail.email_received_at.desc()).all()
     
-    results = query.all()
-    
-    emails_with_client = []
-    for email, client_name, client_company in results:
+    emails_list = []
+    for email in emails:
         email_dict = {
             "id": email.id,
             "user_id": email.user_id,
@@ -203,6 +201,9 @@ def get_intercepted_emails(
             "subject": email.subject,
             "body": email.body,
             "confidence_score": email.confidence_score,
+            "matched_rule_id": email.matched_rule_id,
+            "rule_type": None,
+            "rule_pattern": None,
             "ai_classification": email.ai_classification,
             "ai_confidence": email.ai_confidence,
             "ai_reasoning": email.ai_reasoning,
@@ -210,28 +211,15 @@ def get_intercepted_emails(
             "processed_at": email.processed_at,
             "email_received_at": email.email_received_at,
             "created_at": email.created_at,
-            "client_name": client_name,
-            "client_company": client_company,
+            "client_name": None,
+            "client_company": None,
             "attachments": [],
             "related_request_ids": []
         }
         
-        # Parse JSON fields
-        if email.attachments:
-            try:
-                email_dict["attachments"] = json.loads(email.attachments)
-            except json.JSONDecodeError:
-                email_dict["attachments"] = []
-        
-        if email.related_request_ids:
-            try:
-                email_dict["related_request_ids"] = json.loads(email.related_request_ids)
-            except json.JSONDecodeError:
-                email_dict["related_request_ids"] = []
-        
-        emails_with_client.append(email_dict)
+        emails_list.append(email_dict)
     
-    return emails_with_client
+    return emails_list
 
 @router.post("/classify/{email_id}", response_model=EmailClassificationResponse)
 def classify_email(
@@ -267,6 +255,88 @@ def classify_email(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Classification failed: {str(e)}"
+        )
+
+@router.post("/match-clients")
+def match_clients_to_emails(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Re-applique l'algorithme de matching sur TOUS les emails existants
+    Pour tester l'algorithme de reconnaissance client
+    """
+    try:
+        from app.services.email_service import EmailMatchingService
+        
+        matching_service = EmailMatchingService(db)
+        
+        # Récupérer tous les emails de l'utilisateur
+        emails = db.query(InterceptedEmail).filter(
+            InterceptedEmail.user_id == current_user.id
+        ).all()
+        
+        matched_count = 0
+        ignored_count = 0
+        results = []
+        
+        for email in emails:
+            # Appliquer l'algorithme de matching
+            client, confidence, rule = matching_service.find_matching_client(
+                email.sender_email, 
+                current_user.id
+            )
+            
+            # Mettre à jour l'email avec les résultats
+            email.client_id = client.id if client else None
+            email.confidence_score = confidence
+            email.matched_rule_id = rule.id if rule else None
+            
+            if client:
+                matched_count += 1
+                results.append({
+                    "email_id": email.id,
+                    "sender_email": email.sender_email,
+                    "subject": email.subject,
+                    "matched": True,
+                    "client_id": client.id,
+                    "client_name": client.name,
+                    "client_company": client.company,
+                    "confidence": round(confidence, 2),
+                    "rule_type": rule.rule_type.value if rule else "auto",
+                    "rule_pattern": rule.pattern if rule else "automatic matching"
+                })
+            else:
+                ignored_count += 1
+                results.append({
+                    "email_id": email.id,
+                    "sender_email": email.sender_email,
+                    "subject": email.subject,
+                    "matched": False,
+                    "client_id": None,
+                    "client_name": None,
+                    "client_company": None,
+                    "confidence": 0.0,
+                    "rule_type": None,
+                    "rule_pattern": None
+                })
+        
+        db.commit()
+        
+        return {
+            "total_emails": len(emails),
+            "matched_count": matched_count,
+            "ignored_count": ignored_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Client matching failed: {str(e)}"
         )
 
 @router.post("/webhook/{provider}")

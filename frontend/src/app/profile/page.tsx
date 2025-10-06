@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ProtectedLayout } from '@/components/layout/ProtectedLayout';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuth } from '@/contexts/AuthContext';
-import { requestsAPI } from '@/services/api';
+import { requestsAPI, authAPI } from '@/services/api';
 import { RequestWithClient } from '@/types';
 import { User, Building, Mail, Phone, Calendar, Activity } from 'lucide-react';
 
@@ -39,12 +38,13 @@ export default function ProfilePage() {
     setLoading(true);
 
     try {
-      // Here you would call an API to update user profile
-      // For now, we'll just simulate the update
-      console.log('Updating profile:', formData);
+      await authAPI.updateCurrentUser(formData);
       setIsEditing(false);
+      // Refresh auth context
+      window.location.reload();
     } catch (error) {
       console.error('Error updating profile:', error);
+      alert('Failed to update profile');
     } finally {
       setLoading(false);
     }
@@ -69,17 +69,14 @@ export default function ProfilePage() {
 
   if (!user) {
     return (
-      <ProtectedLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-        </div>
-      </ProtectedLayout>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
     );
   }
 
   return (
-    <ProtectedLayout>
-      <div className="px-4 py-6 sm:px-0">
+    <div className="px-4 py-6 sm:px-0">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Profile</h1>
           <p className="mt-2 text-gray-600">Manage your account information and view activity</p>
@@ -265,6 +262,5 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
-    </ProtectedLayout>
   );
 }

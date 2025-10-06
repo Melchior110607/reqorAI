@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ProtectedLayout } from '@/components/layout/ProtectedLayout';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { RequestForm } from '@/components/requests/RequestForm';
@@ -131,16 +130,13 @@ export default function IncomingRequestsPage() {
 
   if (loading) {
     return (
-      <ProtectedLayout>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
         </div>
-      </ProtectedLayout>
     );
   }
 
   return (
-    <ProtectedLayout>
       <div className="px-4 py-6 sm:px-0">
         <div className="sm:flex sm:items-center sm:justify-between mb-8">
           <div>
@@ -278,6 +274,5 @@ export default function IncomingRequestsPage() {
         </Modal>
 
       </div>
-    </ProtectedLayout>
   );
 }

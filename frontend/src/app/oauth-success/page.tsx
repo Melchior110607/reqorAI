@@ -7,36 +7,43 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function OAuthSuccessPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login } = useAuth();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const token = searchParams.get('token');
-    const provider = searchParams.get('provider');
-    const error = searchParams.get('error');
+    const handleOAuthSuccess = async () => {
+      const token = searchParams.get('token');
+      const provider = searchParams.get('provider');
+      const error = searchParams.get('error');
 
-    if (error) {
-      setStatus('error');
-      setMessage(error);
-      setTimeout(() => router.push('/login'), 3000);
-      return;
-    }
+      if (error) {
+        setStatus('error');
+        setMessage(error);
+        setTimeout(() => router.push('/login'), 3000);
+        return;
+      }
 
-    if (token) {
-      // Sauvegarder le token
-      localStorage.setItem('token', token);
-      
-      setStatus('success');
-      setMessage(`Successfully authenticated with ${provider}!`);
-      
-      // Rediriger vers le dashboard
-      setTimeout(() => router.push('/dashboard'), 1500);
-    } else {
-      setStatus('error');
-      setMessage('No authentication token received');
-      setTimeout(() => router.push('/login'), 3000);
-    }
+      if (token) {
+        // Sauvegarder le token (utiliser access_token pour cohérence)
+        localStorage.setItem('access_token', token);
+        localStorage.setItem('token', token); // Backup
+        
+        setStatus('success');
+        setMessage(`Successfully authenticated with ${provider}!`);
+        
+        // Rediriger vers le dashboard après un court délai
+        setTimeout(() => {
+          // Force page reload to trigger AuthContext checkAuth
+          window.location.href = '/dashboard';
+        }, 1500);
+      } else {
+        setStatus('error');
+        setMessage('No authentication token received');
+        setTimeout(() => router.push('/login'), 3000);
+      }
+    };
+
+    handleOAuthSuccess();
   }, [searchParams, router]);
 
   return (

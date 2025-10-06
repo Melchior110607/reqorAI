@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ProtectedLayout } from '@/components/layout/ProtectedLayout';
 import { Button } from '@/components/ui/Button';
 import { emailAPI } from '@/services/emailAPI';
 import { EmailConnection, EmailProvider, ConnectionStatus } from '@/types/email';
@@ -113,16 +112,13 @@ export default function EmailSettingsPage() {
 
   if (loading) {
     return (
-      <ProtectedLayout>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
         </div>
-      </ProtectedLayout>
     );
   }
 
   return (
-    <ProtectedLayout>
       <div className="px-4 py-6 sm:px-0">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Email Settings</h1>
@@ -237,6 +233,5 @@ export default function EmailSettingsPage() {
           </div>
         </div>
       </div>
-    </ProtectedLayout>
   );
 }

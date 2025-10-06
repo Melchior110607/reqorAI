@@ -26,8 +26,42 @@ def get_clients(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    from app.models.client_email_rule import ClientEmailRule
+    
     clients = db.query(Client).filter(Client.user_id == current_user.id).all()
-    return clients
+    
+    # Enrichir avec les règles email pour chaque client
+    clients_with_rules = []
+    for client in clients:
+        client_dict = {
+            "id": client.id,
+            "user_id": client.user_id,
+            "name": client.name,
+            "company": client.company,
+            "email": client.email,
+            "phone": client.phone,
+            "address": client.address,
+            "created_at": client.created_at,
+            "updated_at": client.updated_at,
+            "email_rules": []
+        }
+        
+        # Récupérer les règles email pour ce client
+        rules = db.query(ClientEmailRule).filter(
+            ClientEmailRule.client_id == client.id
+        ).all()
+        
+        client_dict["email_rules"] = [{
+            "id": rule.id,
+            "rule_type": rule.rule_type,
+            "pattern": rule.pattern,
+            "confidence_score": rule.confidence_score,
+            "is_active": rule.is_active
+        } for rule in rules]
+        
+        clients_with_rules.append(client_dict)
+    
+    return clients_with_rules
 
 @router.get("/{client_id}", response_model=ClientResponse)
 def get_client(

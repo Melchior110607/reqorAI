@@ -10,7 +10,7 @@ from app.database.config import settings
 class OutlookService:
     def __init__(self, db: Session):
         self.db = db
-        self.scopes = ['https://graph.microsoft.com/Mail.Read', 'https://graph.microsoft.com/Mail.Send', 'https://graph.microsoft.com/User.Read']
+        self.scopes = ['User.Read', 'Mail.Read', 'Mail.Send', 'offline_access']
         self.authority = 'https://login.microsoftonline.com/common'
         
         if not settings.outlook_client_id or not settings.outlook_client_secret:
