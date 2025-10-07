@@ -60,18 +60,21 @@ class GmailService:
         """Gère le callback OAuth et crée la connexion"""
         user_id = int(state)
         
+        # Déterminer l'URL de callback utilisée (doit matcher get_auth_url)
+        callback_url = f"{settings.base_url}/email/callback/gmail"
+        
         client_config = {
             "web": {
                 "client_id": settings.gmail_client_id,
                 "client_secret": settings.gmail_client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [f"{settings.base_url}/api/email/callback/gmail"]
+                "redirect_uris": [callback_url]
             }
         }
         
         flow = Flow.from_client_config(client_config, scopes=self.scopes)
-        flow.redirect_uri = f"{settings.base_url}/api/email/callback/gmail"
+        flow.redirect_uri = callback_url
         
         # Échanger le code contre des tokens
         flow.fetch_token(code=code)
@@ -132,8 +135,8 @@ class GmailService:
             self.db.commit()
             return False
 
-    def get_recent_emails(self, connection: EmailConnection, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Récupère les emails récents"""
+    def get_recent_emails(self, connection: EmailConnection, max_results: int = 10, since_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Récupère les emails récents, optionnellement depuis une date donnée"""
         try:
             credentials = Credentials(
                 token=connection.access_token,
@@ -145,11 +148,18 @@ class GmailService:
             
             service = build('gmail', 'v1', credentials=credentials)
             
+            # Construire la requête avec filtre de date si fourni
+            query = 'in:inbox'
+            if since_timestamp:
+                # Gmail utilise le format: after:YYYY/MM/DD
+                date_str = since_timestamp.strftime('%Y/%m/%d')
+                query = f'in:inbox after:{date_str}'
+            
             # Récupérer la liste des messages
             results = service.users().messages().list(
                 userId='me',
                 maxResults=max_results,
-                q='in:inbox'
+                q=query
             ).execute()
             
             messages = results.get('messages', [])

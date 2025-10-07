@@ -16,6 +16,7 @@ from app.models.email_connection import EmailConnection, EmailProvider
 from app.models.intercepted_email import InterceptedEmail
 from app.models.client import Client
 from app.models.user import User
+from app.models.sync_log import SyncLog
 from app.api.dependencies import get_current_user
 from app.services.gmail_service import GmailService
 from app.services.outlook_service import OutlookService
@@ -141,35 +142,44 @@ def sync_emails_by_provider_name(
         )
     
     try:
+        from datetime import datetime, timezone
+        
+        # Récupérer uniquement les emails depuis la dernière sync
+        since_timestamp = connection.last_sync if connection.last_sync else None
+        
         if connection.provider == EmailProvider.GMAIL:
             gmail_service = GmailService(db)
-            emails = gmail_service.get_recent_emails(connection)
+            emails = gmail_service.get_recent_emails(connection, max_results=50, since_timestamp=since_timestamp)
         elif connection.provider == EmailProvider.OUTLOOK:
             outlook_service = OutlookService(db)
-            emails = outlook_service.get_recent_emails(connection)
+            emails = outlook_service.get_recent_emails(connection, max_results=50, since_timestamp=since_timestamp)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Unsupported provider"
             )
         
-        # Traiter chaque email
+        # Traiter chaque email avec anti-doublon intégré
         processing_service = EmailProcessingService(db)
         processed_count = 0
+        duplicate_count = 0
         
         for email_data in emails:
-            # Vérifier si l'email n'a pas déjà été traité
-            existing = db.query(InterceptedEmail).filter(
-                InterceptedEmail.connection_id == connection.id,
-                InterceptedEmail.sender_email == email_data['sender_email'],
-                InterceptedEmail.subject == email_data['subject']
-            ).first()
-            
-            if not existing:
-                processing_service.process_intercepted_email(email_data, connection.id, current_user.id)
+            result = processing_service.process_intercepted_email(email_data, connection.id, current_user.id)
+            if result:
                 processed_count += 1
+            else:
+                duplicate_count += 1
         
-        return {"message": f"✅ {processed_count} nouveaux emails synchronisés!", "count": processed_count}
+        # Mettre à jour last_sync
+        connection.last_sync = datetime.now(timezone.utc)
+        db.commit()
+        
+        message = f"✅ {processed_count} nouveaux emails"
+        if duplicate_count > 0:
+            message += f" ({duplicate_count} doublons évités)"
+        
+        return {"message": message, "count": processed_count, "duplicates": duplicate_count}
         
     except Exception as e:
         raise HTTPException(
@@ -363,3 +373,22 @@ async def email_webhook(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Webhook processing failed: {str(e)}"
         )
+
+@router.get("/sync-logs")
+def get_sync_logs(
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Récupère les logs de synchronisation automatique"""
+    logs = db.query(SyncLog).order_by(SyncLog.created_at.desc()).limit(limit).all()
+    
+    return [{
+        "id": log.id,
+        "sync_type": log.sync_type,
+        "total_synced": log.total_synced,
+        "total_duplicates": log.total_duplicates,
+        "connections_processed": log.connections_processed,
+        "details": log.details,
+        "error": log.error,
+        "created_at": log.created_at
+    } for log in logs]

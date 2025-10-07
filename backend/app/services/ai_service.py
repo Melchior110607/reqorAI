@@ -38,13 +38,13 @@ class AIClassificationService:
         # Appel à l'IA
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": context}
                 ],
                 temperature=0.1,
-                max_tokens=1000
+                max_tokens=5000
             )
             
             result = self._parse_ai_response(response.choices[0].message.content)

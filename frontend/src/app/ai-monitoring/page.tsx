@@ -44,18 +44,39 @@ export default function AIMonitoringDebugPage() {
     }
   };
 
-  const syncGmail = async () => {
+  const syncProvider = async (provider: string, providerName: string) => {
     try {
       setSyncing(true);
-      await emailAPI.syncEmails('gmail');
+      await emailAPI.syncEmails(provider);
       // Attendre 2 secondes puis recharger
       setTimeout(() => {
         fetchEmails();
       }, 2000);
-      alert('✅ Synchronisation Gmail lancée! Les emails vont apparaître dans 2 secondes.');
+      alert(`✅ Synchronisation ${providerName} lancée! Les emails vont apparaître dans 2 secondes.`);
     } catch (error: any) {
-      console.error('Error syncing Gmail:', error);
+      console.error(`Error syncing ${providerName}:`, error);
       alert('❌ Erreur: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const syncAll = async () => {
+    try {
+      setSyncing(true);
+      // Synchroniser Gmail et Outlook en parallèle
+      await Promise.all([
+        emailAPI.syncEmails('gmail').catch(e => console.log('Gmail sync skipped:', e.message)),
+        emailAPI.syncEmails('outlook').catch(e => console.log('Outlook sync skipped:', e.message))
+      ]);
+      // Attendre 2 secondes puis recharger
+      setTimeout(() => {
+        fetchEmails();
+      }, 2000);
+      alert('✅ Synchronisation de tous les comptes lancée! Les emails vont apparaître dans 2 secondes.');
+    } catch (error: any) {
+      console.error('Error syncing all:', error);
+      alert('❌ Erreur: ' + error.message);
     } finally {
       setSyncing(false);
     }
@@ -81,9 +102,29 @@ export default function AIMonitoringDebugPage() {
             </p>
           </div>
           <div className="flex space-x-2">
-            <Button onClick={syncGmail} disabled={syncing} className="bg-green-600 hover:bg-green-700 text-white">
+            <Button 
+              onClick={syncAll} 
+              disabled={syncing} 
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
               <Mail className={`w-4 h-4 mr-2 ${syncing ? 'animate-bounce' : ''}`} />
-              {syncing ? 'Syncing...' : '🔄 Sync Gmail'}
+              {syncing ? 'Syncing...' : '🔄 Sync All'}
+            </Button>
+            <Button 
+              onClick={() => syncProvider('gmail', 'Gmail')} 
+              disabled={syncing} 
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              <Mail className={`w-4 h-4 mr-2 ${syncing ? 'animate-bounce' : ''}`} />
+              Gmail
+            </Button>
+            <Button 
+              onClick={() => syncProvider('outlook', 'Outlook')} 
+              disabled={syncing} 
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Mail className={`w-4 h-4 mr-2 ${syncing ? 'animate-bounce' : ''}`} />
+              Outlook
             </Button>
             <Button onClick={fetchEmails} variant="outline">
               <RefreshCw className="w-4 h-4 mr-2" />

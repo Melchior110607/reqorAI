@@ -11,6 +11,7 @@ import {
   Mail,
   Brain,
   Target,
+  Clock,
 } from 'lucide-react';
 
 export function Sidebar() {
@@ -24,6 +25,7 @@ export function Sidebar() {
     { href: '/email-settings', label: 'Email', icon: Mail },
     { href: '/ai-monitoring', label: 'AI Debug', icon: Brain },
     { href: '/client-matching', label: 'Matching Test', icon: Target },
+    { href: '/auto-sync', label: 'Auto Sync', icon: Clock },
     { href: '/profile', label: 'Profile', icon: User },
   ];
 

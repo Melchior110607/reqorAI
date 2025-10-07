@@ -136,8 +136,22 @@ class EmailProcessingService:
         self.db = db
         self.matching_service = EmailMatchingService(db)
 
-    def process_intercepted_email(self, email_data: dict, connection_id: int, user_id: int) -> InterceptedEmail:
-        """Traite un email intercepté"""
+    def process_intercepted_email(self, email_data: dict, connection_id: int, user_id: int) -> Optional[InterceptedEmail]:
+        """Traite un email intercepté (retourne None si doublon)"""
+        message_id = email_data.get('id')
+        if not message_id:
+            print("⚠️ Email sans message_id, ignoré")
+            return None
+        
+        # ANTI-DOUBLON: Vérifier si cet email existe déjà
+        existing = self.db.query(InterceptedEmail).filter(
+            InterceptedEmail.message_id == message_id
+        ).first()
+        
+        if existing:
+            print(f"🔄 Email {message_id} déjà traité, ignoré")
+            return None
+        
         sender_email = email_data.get('sender_email', '').lower()
         
         # Trouver le client correspondant
@@ -148,6 +162,7 @@ class EmailProcessingService:
             user_id=user_id,
             connection_id=connection_id,
             client_id=client.id if client else None,
+            message_id=message_id,
             sender_email=sender_email,
             sender_name=email_data.get('sender_name', ''),
             subject=email_data.get('subject', ''),

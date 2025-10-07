@@ -28,6 +28,7 @@ class InterceptedEmail(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)  # Peut être null si pas reconnu
     
     # Email data
+    message_id = Column(String, unique=True, nullable=False, index=True)  # ID unique du message (Gmail/Outlook)
     sender_email = Column(String, nullable=False)
     sender_name = Column(String)
     subject = Column(String, nullable=False)

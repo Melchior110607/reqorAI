@@ -1,7 +1,8 @@
 import json
 import requests
 from urllib.parse import quote
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 from sqlalchemy.orm import Session
 from msal import ConfidentialClientApplication
 from app.models.email_connection import EmailConnection, EmailProvider, ConnectionStatus
@@ -49,11 +50,14 @@ class OutlookService:
         """Gère le callback OAuth et crée la connexion"""
         user_id = int(state)
         
+        # Déterminer l'URL de callback utilisée (doit matcher get_auth_url)
+        callback_url = f"{settings.base_url}/email/callback/outlook"
+        
         # Échanger le code contre des tokens
         result = self.app.acquire_token_by_authorization_code(
             code=code,
             scopes=self.scopes,
-            redirect_uri=f"{settings.base_url}/api/email/callback/outlook"
+            redirect_uri=callback_url
         )
         
         if 'error' in result:
@@ -124,13 +128,18 @@ class OutlookService:
             self.db.commit()
             return False
 
-    def get_recent_emails(self, connection: EmailConnection, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Récupère les emails récents"""
+    def get_recent_emails(self, connection: EmailConnection, max_results: int = 10, since_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Récupère les emails récents, optionnellement depuis une date donnée"""
         try:
             headers = {'Authorization': f'Bearer {connection.access_token}'}
             
-            # Récupérer les messages récents
+            # Construire l'URL avec filtre de date si fourni
             url = f'https://graph.microsoft.com/v1.0/me/messages?$top={max_results}&$orderby=receivedDateTime desc'
+            if since_timestamp:
+                # Outlook utilise le format ISO 8601: 2025-10-06T10:00:00Z
+                date_str = since_timestamp.strftime('%Y-%m-%dT%H:%M:%SZ')
+                url += f'&$filter=receivedDateTime ge {date_str}'
+            
             response = requests.get(url, headers=headers)
             
             if response.status_code == 401:
@@ -162,14 +171,30 @@ class OutlookService:
         """Parse un message Outlook"""
         sender = message.get('sender', {}).get('emailAddress', {})
         
+        # Parser la date ISO 8601 de Microsoft en datetime Python
+        date_str = message.get('receivedDateTime', '')
+        try:
+            # Format Outlook: 2025-10-06T11:30:37Z
+            received_at = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Error parsing Outlook date '{date_str}': {e}")
+            received_at = datetime.now()
+        
+        # Extraire le corps du message (text seulement si disponible, sinon HTML)
+        body_content = message.get('body', {})
+        body_text = body_content.get('content', '')
+        
+        # Si le body est en HTML, on pourrait le nettoyer ici si nécessaire
+        # Pour l'instant on garde tel quel
+        
         return {
             'id': message['id'],
             'thread_id': message.get('conversationId', ''),
             'sender_email': sender.get('address', ''),
             'sender_name': sender.get('name', ''),
             'subject': message.get('subject', ''),
-            'body': message.get('body', {}).get('content', ''),
-            'received_at': message.get('receivedDateTime', ''),
+            'body': body_text,
+            'received_at': received_at,  # Maintenant c'est un datetime Python
             'attachments': []  # TODO: Implémenter extraction des pièces jointes
         }
 
