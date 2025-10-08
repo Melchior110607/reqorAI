@@ -27,6 +27,8 @@ class EmailConnection(Base):
     status = Column(Enum(ConnectionStatus), default=ConnectionStatus.ACTIVE)
     last_sync = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True))
+    consecutive_failures = Column(Integer, default=0)  # Compteur d'échecs consécutifs
+    last_error = Column(Text, nullable=True)  # Dernière erreur pour debugging
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

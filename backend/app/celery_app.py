@@ -30,7 +30,7 @@ celery_app.conf.beat_schedule = {
         'task': 'app.tasks.email_sync.sync_all_user_emails',
         # ⚠️ MODE DEBUG: Sync chaque minute (pour tests)
         # 🔧 PRODUCTION: Changer en crontab(minute='*/30') pour sync toutes les 30min
-        'schedule': crontab(minute='*'),  # DEBUG: Toutes les minutes
+        'schedule': crontab(minute='*/30'),  # DEBUG: Toutes les minutes
         'options': {'queue': 'email_sync'}
     },
 }

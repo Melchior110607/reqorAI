@@ -5,8 +5,19 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from msal import ConfidentialClientApplication
+from requests.exceptions import RequestException, ConnectionError, Timeout
 from app.models.email_connection import EmailConnection, EmailProvider, ConnectionStatus
 from app.database.config import settings
+
+
+class NetworkError(Exception):
+    """Erreur réseau temporaire - ne pas marquer la connexion en ERROR"""
+    pass
+
+
+class AuthenticationError(Exception):
+    """Erreur d'authentification - peut nécessiter reconnexion"""
+    pass
 
 class OutlookService:
     def __init__(self, db: Session):
@@ -140,19 +151,22 @@ class OutlookService:
                 date_str = since_timestamp.strftime('%Y-%m-%dT%H:%M:%SZ')
                 url += f'&$filter=receivedDateTime ge {date_str}'
             
-            response = requests.get(url, headers=headers)
+            # Timeout de 10 secondes pour éviter de bloquer trop longtemps
+            response = requests.get(url, headers=headers, timeout=10)
             
             if response.status_code == 401:
                 # Token expiré, essayer de le rafraîchir
+                print(f"🔄 Outlook token expired for {connection.email_address}, refreshing...")
                 if self.refresh_token(connection):
                     headers['Authorization'] = f'Bearer {connection.access_token}'
-                    response = requests.get(url, headers=headers)
+                    response = requests.get(url, headers=headers, timeout=10)
                 else:
-                    return []
+                    raise AuthenticationError("Failed to refresh token")
             
             if response.status_code != 200:
-                print(f"Error fetching Outlook emails: {response.status_code} - {response.text}")
-                return []
+                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                print(f"⚠️ Error fetching Outlook emails: {error_msg}")
+                raise AuthenticationError(error_msg)
             
             messages = response.json().get('value', [])
             emails = []
@@ -161,11 +175,30 @@ class OutlookService:
                 email_data = self._parse_outlook_message(message)
                 emails.append(email_data)
             
+            print(f"✅ Fetched {len(emails)} Outlook emails for {connection.email_address}")
             return emails
             
+        except (ConnectionError, Timeout) as e:
+            # Erreurs réseau temporaires - NE PAS marquer en ERROR
+            error_msg = f"Network error (temporary): {type(e).__name__} - {str(e)}"
+            print(f"🌐 {error_msg}")
+            raise NetworkError(error_msg)
+            
+        except RequestException as e:
+            # Autres erreurs réseau
+            error_msg = f"Request error: {type(e).__name__} - {str(e)}"
+            print(f"🌐 {error_msg}")
+            raise NetworkError(error_msg)
+            
+        except AuthenticationError:
+            # Réamorcer l'exception auth
+            raise
+            
         except Exception as e:
-            print(f"Error fetching Outlook emails: {e}")
-            return []
+            # Autres erreurs inattendues
+            error_msg = f"Unexpected error: {type(e).__name__} - {str(e)}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
 
     def _parse_outlook_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Parse un message Outlook"""

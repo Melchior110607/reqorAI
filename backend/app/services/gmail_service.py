@@ -7,10 +7,22 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from requests.exceptions import RequestException, ConnectionError, Timeout
 from sqlalchemy.orm import Session
 from app.models.email_connection import EmailConnection, EmailProvider, ConnectionStatus
 from app.database.config import settings
 from sqlalchemy.sql import func
+
+
+class NetworkError(Exception):
+    """Erreur réseau temporaire - ne pas marquer la connexion en ERROR"""
+    pass
+
+
+class AuthenticationError(Exception):
+    """Erreur d'authentification - peut nécessiter reconnexion"""
+    pass
 
 class GmailService:
     def __init__(self, db: Session):
@@ -146,6 +158,18 @@ class GmailService:
                 client_secret=settings.gmail_client_secret
             )
             
+            # Rafraîchir le token si expiré
+            if credentials.expired and credentials.refresh_token:
+                print(f"🔄 Gmail token expired for {connection.email_address}, refreshing...")
+                try:
+                    credentials.refresh(GoogleRequest())
+                    connection.access_token = credentials.token
+                    connection.expires_at = credentials.expiry
+                    connection.status = ConnectionStatus.ACTIVE
+                    self.db.commit()
+                except Exception as e:
+                    raise AuthenticationError(f"Failed to refresh token: {str(e)}")
+            
             service = build('gmail', 'v1', credentials=credentials)
             
             # Construire la requête avec filtre de date si fourni
@@ -176,11 +200,41 @@ class GmailService:
                 email_data = self._parse_gmail_message(msg)
                 emails.append(email_data)
             
+            print(f"✅ Fetched {len(emails)} Gmail emails for {connection.email_address}")
             return emails
             
+        except HttpError as e:
+            # Erreurs HTTP de l'API Gmail
+            if e.resp.status == 401:
+                error_msg = f"Authentication error: {str(e)}"
+                print(f"🔐 {error_msg}")
+                raise AuthenticationError(error_msg)
+            else:
+                error_msg = f"Gmail API error: {e.resp.status} - {str(e)}"
+                print(f"⚠️ {error_msg}")
+                raise Exception(error_msg)
+                
+        except (ConnectionError, Timeout) as e:
+            # Erreurs réseau temporaires - NE PAS marquer en ERROR
+            error_msg = f"Network error (temporary): {type(e).__name__} - {str(e)}"
+            print(f"🌐 {error_msg}")
+            raise NetworkError(error_msg)
+            
+        except RequestException as e:
+            # Autres erreurs réseau
+            error_msg = f"Request error: {type(e).__name__} - {str(e)}"
+            print(f"🌐 {error_msg}")
+            raise NetworkError(error_msg)
+            
+        except AuthenticationError:
+            # Réamorcer l'exception auth
+            raise
+            
         except Exception as e:
-            print(f"Error fetching Gmail emails: {e}")
-            return []
+            # Autres erreurs inattendues
+            error_msg = f"Unexpected error: {type(e).__name__} - {str(e)}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
 
     def _parse_gmail_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Parse un message Gmail"""
