@@ -1,5 +1,6 @@
 import json
 import requests
+import socket
 from urllib.parse import quote
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -142,6 +143,17 @@ class OutlookService:
     def get_recent_emails(self, connection: EmailConnection, max_results: int = 10, since_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Récupère les emails récents, optionnellement depuis une date donnée"""
         try:
+            # ✅ VÉRIFICATION RÉSEAU PRÉALABLE (Outlook uniquement)
+            # Check si l'appareil est connecté avant de tenter l'appel API
+            try:
+                socket.setdefaulttimeout(2)
+                socket.gethostbyname('login.microsoftonline.com')
+                print(f"🌐 Network check OK for Outlook ({connection.email_address})")
+            except (socket.gaierror, socket.timeout) as e:
+                error_msg = f"No network connectivity detected: {type(e).__name__}"
+                print(f"🌐 {error_msg}")
+                raise NetworkError(error_msg)
+            
             headers = {'Authorization': f'Bearer {connection.access_token}'}
             
             # Construire l'URL avec filtre de date si fourni

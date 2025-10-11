@@ -28,10 +28,10 @@ def sync_all_user_emails():
     """
     db = SessionLocal()
     try:
-        # Récupérer toutes les connexions actives
+        # Récupérer toutes les connexions actives (distinct pour éviter doublons)
         connections = db.query(EmailConnection).filter(
             EmailConnection.status == ConnectionStatus.ACTIVE
-        ).all()
+        ).distinct().all()
         
         # OPTIMISATION: Si aucune connexion, ne rien faire
         if not connections:

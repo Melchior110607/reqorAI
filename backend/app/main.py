@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.config import engine, Base
-from app.api import auth, clients, requests, email
-from app.models import user, client, request, email_connection, client_email_rule, intercepted_email
+from app.api import auth, clients, requests, email, webhooks, debug
+from app.models import user, client, request, email_connection, client_email_rule, intercepted_email, webhook_subscription
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -27,6 +27,8 @@ app.include_router(auth.router)
 app.include_router(clients.router)
 app.include_router(requests.router)
 app.include_router(email.router)
+app.include_router(webhooks.router)
+app.include_router(debug.router)  # DEBUG - Remove in production
 
 @app.get("/")
 def root():

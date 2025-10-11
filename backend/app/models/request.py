@@ -40,6 +40,11 @@ class Request(Base):
     attachments = Column(Text)  # JSON string of file paths
     is_priority = Column(Boolean, default=False)  # Pour affichage en haut
     
+    # Confirmation tracking (pour ingoing et outgoing requests)
+    confirmation_received = Column(Boolean, default=False)
+    confirmation_received_at = Column(DateTime(timezone=True), nullable=True)
+    confirmation_details = Column(Text, nullable=True)  # Détails de la confirmation (automatique via IA)
+    
     # Foreign Keys
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)

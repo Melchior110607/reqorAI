@@ -22,6 +22,8 @@ from app.services.gmail_service import GmailService
 from app.services.outlook_service import OutlookService
 from app.services.email_service import EmailProcessingService
 from app.services.ai_service import AIClassificationService
+from app.services.gmail_webhook_service import GmailWebhookService
+from app.services.outlook_webhook_service import OutlookWebhookService
 
 router = APIRouter(prefix="/email", tags=["Email Integration"])
 
@@ -73,9 +75,29 @@ def oauth_callback(
         if provider == EmailProvider.GMAIL:
             gmail_service = GmailService(db)
             connection = gmail_service.handle_oauth_callback(code, state)
+            
+            # ✅ AUTO-SETUP WEBHOOK for Gmail
+            try:
+                gmail_webhook = GmailWebhookService(db)
+                webhook_result = gmail_webhook.setup_watch(connection)
+                print(f"✅ Gmail webhook auto-setup: {webhook_result}")
+            except Exception as webhook_error:
+                print(f"⚠️ Gmail webhook auto-setup failed (non-critical): {str(webhook_error)}")
+                # Don't fail the whole OAuth if webhook setup fails
+            
         elif provider == EmailProvider.OUTLOOK:
             outlook_service = OutlookService(db)
             connection = outlook_service.handle_oauth_callback(code, state)
+            
+            # ✅ AUTO-SETUP WEBHOOK for Outlook
+            try:
+                outlook_webhook = OutlookWebhookService(db)
+                webhook_result = outlook_webhook.create_subscription(connection)
+                print(f"✅ Outlook webhook auto-setup: {webhook_result}")
+            except Exception as webhook_error:
+                print(f"⚠️ Outlook webhook auto-setup failed (non-critical): {str(webhook_error)}")
+                # Don't fail the whole OAuth if webhook setup fails
+            
         else:
             return RedirectResponse(url="http://localhost:3000/email-callback?error=unsupported_provider")
         
@@ -116,10 +138,71 @@ def delete_email_connection(
             detail="Email connection not found"
         )
     
+    # Stop webhook before deleting
+    try:
+        if connection.provider == EmailProvider.GMAIL:
+            gmail_webhook = GmailWebhookService(db)
+            gmail_webhook.stop_watch(connection)
+        elif connection.provider == EmailProvider.OUTLOOK:
+            outlook_webhook = OutlookWebhookService(db)
+            outlook_webhook.delete_subscription(connection)
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to stop webhook: {str(e)}")
+    
     db.delete(connection)
     db.commit()
     
     return {"message": "Email connection deleted successfully"}
+
+@router.post("/webhook/setup/{connection_id}")
+def setup_webhook(
+    connection_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Setup webhook for an email connection"""
+    connection = db.query(EmailConnection).filter(
+        EmailConnection.id == connection_id,
+        EmailConnection.user_id == current_user.id
+    ).first()
+    
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email connection not found"
+        )
+    
+    try:
+        if connection.provider == EmailProvider.GMAIL:
+            gmail_webhook = GmailWebhookService(db)
+            result = gmail_webhook.setup_watch(connection)
+            return {
+                "message": "Gmail webhook setup successful",
+                "provider": "gmail",
+                **result
+            }
+        
+        elif connection.provider == EmailProvider.OUTLOOK:
+            outlook_webhook = OutlookWebhookService(db)
+            result = outlook_webhook.create_subscription(connection)
+            return {
+                "message": "Outlook webhook setup successful",
+                "provider": "outlook",
+                **result
+            }
+        
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unsupported provider"
+            )
+            
+    except Exception as e:
+        print(f"❌ Webhook setup error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to setup webhook: {str(e)}"
+        )
 
 @router.post("/sync/{provider_name}")
 def sync_emails_by_provider_name(
@@ -192,7 +275,7 @@ def get_intercepted_emails(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Récupère TOUS les emails interceptés - DEBUG SIMPLE"""
+    """Récupère TOUS les emails interceptés avec infos client"""
     
     # Récupérer tous les emails de l'utilisateur, triés par date
     emails = db.query(InterceptedEmail).filter(
@@ -201,6 +284,33 @@ def get_intercepted_emails(
     
     emails_list = []
     for email in emails:
+        # Charger les infos du client si client_id existe
+        client_name = None
+        client_company = None
+        if email.client_id:
+            client = db.query(Client).filter(Client.id == email.client_id).first()
+            if client:
+                client_name = client.name
+                client_company = client.company
+        
+        # Parser related_request_ids si c'est un JSON string
+        related_requests = []
+        if email.related_request_ids:
+            try:
+                related_requests = json.loads(email.related_request_ids) if isinstance(email.related_request_ids, str) else email.related_request_ids
+            except:
+                related_requests = []
+        
+        # Charger la règle de matching si elle existe
+        rule_type = None
+        rule_pattern = None
+        if email.matched_rule_id:
+            from app.models.client_email_rule import ClientEmailRule
+            rule = db.query(ClientEmailRule).filter(ClientEmailRule.id == email.matched_rule_id).first()
+            if rule:
+                rule_type = rule.rule_type.value
+                rule_pattern = rule.pattern
+        
         email_dict = {
             "id": email.id,
             "user_id": email.user_id,
@@ -212,19 +322,19 @@ def get_intercepted_emails(
             "body": email.body,
             "confidence_score": email.confidence_score,
             "matched_rule_id": email.matched_rule_id,
-            "rule_type": None,
-            "rule_pattern": None,
-            "ai_classification": email.ai_classification,
+            "rule_type": rule_type,
+            "rule_pattern": rule_pattern,
+            "ai_classification": email.ai_classification.value if email.ai_classification else None,
             "ai_confidence": email.ai_confidence,
             "ai_reasoning": email.ai_reasoning,
-            "processing_status": email.processing_status,
+            "processing_status": email.processing_status.value if email.processing_status else None,
             "processed_at": email.processed_at,
             "email_received_at": email.email_received_at,
             "created_at": email.created_at,
-            "client_name": None,
-            "client_company": None,
+            "client_name": client_name,
+            "client_company": client_company,
             "attachments": [],
-            "related_request_ids": []
+            "related_request_ids": related_requests
         }
         
         emails_list.append(email_dict)
@@ -250,21 +360,106 @@ def classify_email(
         )
     
     try:
+        print(f"🤖 Starting classification for email {email_id}")
         ai_service = AIClassificationService(db)
+        print(f"🤖 AIClassificationService initialized")
         result = ai_service.classify_email(intercepted_email)
+        print(f"🤖 Classification result: {result.get('classification')}")
+        
+        # Convertir la string en enum
+        from app.models.intercepted_email import EmailClassification as EmailClassificationEnum
+        classification_enum = EmailClassificationEnum(result['classification'])
         
         return EmailClassificationResponse(
             email_id=email_id,
-            classification=result['classification'],
+            classification=classification_enum,
             confidence=result['confidence'],
             reasoning=result['reasoning'],
             related_requests=result['related_requests']
         )
         
     except Exception as e:
+        import traceback
+        print(f"❌ Classification error for email {email_id}:")
+        print(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Classification failed: {str(e)}"
+        )
+
+@router.post("/classify-all")
+def classify_all_pending_emails(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Classifie TOUS les emails PENDING de l'utilisateur - SEQUENTIELLEMENT
+    Les appels OpenAI sont faits un par un pour éviter les erreurs
+    """
+    from app.models.intercepted_email import ProcessingStatus
+    
+    try:
+        # Récupérer tous les emails PENDING avec client_id non null
+        pending_emails = db.query(InterceptedEmail).filter(
+            InterceptedEmail.user_id == current_user.id,
+            InterceptedEmail.processing_status == ProcessingStatus.PENDING,
+            InterceptedEmail.client_id.isnot(None)  # Seulement les emails matchés
+        ).all()
+        
+        if not pending_emails:
+            return {
+                "message": "No pending emails to classify",
+                "total": 0,
+                "classified": 0,
+                "failed": 0,
+                "skipped": 0
+            }
+        
+        ai_service = AIClassificationService(db)
+        classified_count = 0
+        failed_count = 0
+        skipped_count = 0
+        results = []
+        
+        # IMPORTANT: Traitement SEQUENTIEL (un email à la fois)
+        for email in pending_emails:
+            try:
+                print(f"🤖 Classifying email {email.id} from {email.sender_email}...")
+                result = ai_service.classify_email(email)
+                classified_count += 1
+                results.append({
+                    "email_id": email.id,
+                    "status": "classified",
+                    "classification": result['classification'],
+                    "confidence": result['confidence']
+                })
+                print(f"✅ Email {email.id} classified as {result['classification']}")
+                
+            except Exception as e:
+                failed_count += 1
+                error_msg = str(e)
+                print(f"❌ Failed to classify email {email.id}: {error_msg}")
+                results.append({
+                    "email_id": email.id,
+                    "status": "failed",
+                    "error": error_msg[:200]  # Limiter la taille de l'erreur
+                })
+                # Continuer avec le prochain email même en cas d'erreur
+                continue
+        
+        return {
+            "message": f"Classification completed: {classified_count} classified, {failed_count} failed",
+            "total": len(pending_emails),
+            "classified": classified_count,
+            "failed": failed_count,
+            "skipped": skipped_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Batch classification failed: {str(e)}"
         )
 
 @router.post("/match-clients")
@@ -349,30 +544,30 @@ def match_clients_to_emails(
             detail=f"Client matching failed: {str(e)}"
         )
 
-@router.post("/webhook/{provider}")
-async def email_webhook(
-    provider: EmailProvider,
-    request: FastAPIRequest,
-    db: Session = Depends(get_db)
-):
-    """Webhook pour recevoir les notifications d'emails"""
-    try:
-        body = await request.body()
+# @router.post("/webhook/{provider}")
+# async def email_webhook(
+#     provider: EmailProvider,
+#     request: FastAPIRequest,
+#     db: Session = Depends(get_db)
+# ):
+#     """Webhook pour recevoir les notifications d'emails"""
+#     try:
+#         body = await request.body()
         
-        if provider == EmailProvider.GMAIL:
-            # TODO: Implémenter le traitement des webhooks Gmail
-            pass
-        elif provider == EmailProvider.OUTLOOK:
-            # TODO: Implémenter le traitement des webhooks Outlook
-            pass
+#         if provider == EmailProvider.GMAIL:
+#             # TODO: Implémenter le traitement des webhooks Gmail
+#             pass
+#         elif provider == EmailProvider.OUTLOOK:
+#             # TODO: Implémenter le traitement des webhooks Outlook
+#             pass
         
-        return {"status": "webhook received"}
+#         return {"status": "webhook received"}
         
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Webhook processing failed: {str(e)}"
-        )
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Webhook processing failed: {str(e)}"
+#         )
 
 @router.get("/sync-logs")
 def get_sync_logs(

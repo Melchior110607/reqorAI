@@ -10,7 +10,7 @@ celery_app = Celery(
     "projectai",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=['app.tasks.email_sync']
+    include=['app.tasks.email_sync', 'app.tasks.webhook_renewal']
 )
 
 # Configuration Celery
@@ -26,11 +26,24 @@ celery_app.conf.update(
 
 # Configuration Celery Beat (tâches périodiques)
 celery_app.conf.beat_schedule = {
-    'sync-all-emails-every-minute': {
+    # ⚠️ DEPRECATED: Polling fallback (keep for safety, run rarely)
+    # Webhooks handle real-time notifications now
+    'sync-all-emails-fallback': {
         'task': 'app.tasks.email_sync.sync_all_user_emails',
-        # ⚠️ MODE DEBUG: Sync chaque minute (pour tests)
-        # 🔧 PRODUCTION: Changer en crontab(minute='*/30') pour sync toutes les 30min
-        'schedule': crontab(minute='*/30'),  # DEBUG: Toutes les minutes
+        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours as fallback
+        'options': {'queue': 'email_sync'}
+    },
+    
+    # ✅ NEW: Webhook renewal tasks (critical for webhook reliability)
+    'renew-gmail-watches-daily': {
+        'task': 'app.tasks.webhook_renewal.renew_gmail_watches',
+        'schedule': crontab(minute=0, hour=2),  # Every day at 2:00 AM UTC
+        'options': {'queue': 'email_sync'}
+    },
+    
+    'renew-outlook-subscriptions-daily': {
+        'task': 'app.tasks.webhook_renewal.renew_outlook_subscriptions',
+        'schedule': crontab(minute=0, hour=3),  # Every day at 3:00 AM UTC
         'options': {'queue': 'email_sync'}
     },
 }
@@ -38,5 +51,6 @@ celery_app.conf.beat_schedule = {
 # Configuration des queues
 celery_app.conf.task_routes = {
     'app.tasks.email_sync.*': {'queue': 'email_sync'},
+    'app.tasks.webhook_renewal.*': {'queue': 'email_sync'},
 }
 

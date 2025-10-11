@@ -39,6 +39,31 @@ export const emailAPI = {
     return response.data;
   },
 
+  classifyAllEmails: async (): Promise<{
+    message: string;
+    total: number;
+    classified: number;
+    failed: number;
+    skipped: number;
+    results: Array<{
+      email_id: number;
+      status: string;
+      classification?: string;
+      confidence?: number;
+      error?: string;
+    }>;
+  }> => {
+    const response = await api.post('/email/classify-all');
+    return response.data;
+  },
+
+  getSyncLogs: async (limit?: number): Promise<any[]> => {
+    const response = await api.get('/email/sync-logs', {
+      params: { limit: limit || 50 }
+    });
+    return response.data;
+  },
+
   // Client Matching
   matchClientsToEmails: async (): Promise<{
     total_emails: number;

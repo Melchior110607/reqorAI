@@ -216,8 +216,13 @@ export default function AutoSyncPage() {
                   <div className="mt-4 bg-gray-50 rounded-lg p-4">
                     <h4 className="text-sm font-medium text-gray-900 mb-3">Détails par connexion :</h4>
                     <div className="space-y-2">
-                      {log.details.map((detail, idx) => (
-                        <div key={idx} className="flex items-center justify-between text-sm">
+                      {/* Déduplication des connexions par connection_id */}
+                      {log.details
+                        .filter((detail, index, self) => 
+                          index === self.findIndex((d) => d.connection_id === detail.connection_id)
+                        )
+                        .map((detail, idx) => (
+                        <div key={detail.connection_id || idx} className="flex items-center justify-between text-sm">
                           <div className="flex items-center space-x-3">
                             <span className="font-medium text-gray-700">{detail.email}</span>
                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">

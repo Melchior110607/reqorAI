@@ -26,11 +26,13 @@ class AIClassificationService:
                 Request.user_id == intercepted_email.user_id
             ).all()
             
+            
             incoming_requests = self.db.query(Request).filter(
                 Request.client_id == intercepted_email.client_id,
                 Request.type == "incoming",
                 Request.user_id == intercepted_email.user_id
             ).all()
+            
 
         # Préparer le contexte pour l'IA
         context = self._prepare_context(intercepted_email, outgoing_requests, incoming_requests)
@@ -48,6 +50,8 @@ class AIClassificationService:
             )
             
             result = self._parse_ai_response(response.choices[0].message.content)
+
+        
             
             # Mettre à jour l'email intercepté
             intercepted_email.ai_classification = result['classification']
@@ -68,32 +72,36 @@ class AIClassificationService:
             raise e
 
     def _get_system_prompt(self) -> str:
-        """Prompt système pour la classification"""
+        """System prompt for email classification"""
         return """
-Vous êtes un assistant IA spécialisé dans l'analyse d'emails B2B pour un système de gestion de demandes.
+You are an AI assistant specializing in analyzing B2B emails for a request management system.
 
-Votre tâche est de classifier chaque email selon ces catégories EXACTES :
-1. RESPONSE_TO_REQUEST : Email répond à une de nos demandes sortantes
-2. NEW_REQUEST : Nouvelle demande du client (créer incoming request)
-3. CONFIRMATION : Confirmation de réception de notre réponse
-4. CLIENT_REMINDER : Client relance sur une demande entrante
-5. DISSATISFACTION : Insatisfaction ou demande d'infos supplémentaires
-6. MIXED : Combinaison de plusieurs types ci-dessus
-7. UNCLASSIFIED : Ne correspond à aucune catégorie
+Your task is to classify each email according to these EXACT categories. You MUST use the exact category name:
 
-Analysez le contenu, le contexte des demandes existantes, et fournissez :
-- Classification (une des catégories ci-dessus)
-- Score de confiance (0.0 à 1.0)
-- Raisonnement détaillé
-- IDs des demandes liées (si applicable)
+1. response_to_request: Email is responding to one of our OUTGOING requests (we asked them for something)
+2. new_request: New customer request that does NOT relate to any existing incoming/outgoing requests
+3. confirmation: Customer confirms they received our response
+4. client_reminder: Customer is following up / reminding us about an INCOMING request (they asked us for something and we haven't responded yet)
+5. dissatisfaction: Customer expresses dissatisfaction or requests additional information
+6. mixed: Email contains multiple types above OR multiple requests
+7. unclassified: ONLY use this if the email is completely unrelated to business (spam, personal chat, etc.)
 
-Répondez UNIQUEMENT en format JSON valide :
+CRITICAL RULES:
+- If the email relates to ANY existing request, DO NOT use "unclassified"
+- A follow-up on an existing incoming request = "client_reminder"
+- A response to our outgoing request = "response_to_request"
+- "unclassified" means the email has NO business purpose
+- Always link related request IDs in the related_requests array
+
+Respond ONLY in valid JSON format (no markdown, no code blocks):
 {
-  "classification": "CATEGORY",
-  "confidence": 0.85,
-  "reasoning": "Explication détaillée...",
-  "related_requests": [1, 2, 3]
+  "classification": "response_to_request",
+  "confidence": 0.95,
+  "reasoning": "Clear explanation of why this classification was chosen",
+  "related_requests": [1, 2]
 }
+
+Valid classification values: response_to_request, new_request, confirmation, client_reminder, dissatisfaction, mixed, unclassified
 """
 
     def _prepare_context(self, email: InterceptedEmail, outgoing: List[Request], incoming: List[Request]) -> str:
@@ -122,19 +130,24 @@ Répondez UNIQUEMENT en format JSON valide :
             })
         
         context = f"""
-EMAIL À ANALYSER :
-De: {email.sender_email} ({email.sender_name})
-Sujet: {email.subject}
-Contenu: {email.body}
-Reçu le: {email.email_received_at.isoformat()}
+EMAIL TO ANALYZE:
+From: {email.sender_email} ({email.sender_name})
+Subject: {email.subject}
+Content: {email.body}
+Received: {email.email_received_at.isoformat()}
 
-DEMANDES SORTANTES EXISTANTES (nos demandes vers ce client) :
+EXISTING OUTGOING REQUESTS (our requests to this client - we asked them for something):
 {json.dumps(outgoing_context, indent=2, ensure_ascii=False)}
 
-DEMANDES ENTRANTES EXISTANTES (demandes de ce client vers nous) :
+EXISTING INCOMING REQUESTS (this client's requests to us - they asked us for something):
 {json.dumps(incoming_context, indent=2, ensure_ascii=False)}
 
-Analysez cet email et classifiez-le selon les catégories définies.
+INSTRUCTIONS:
+1. Carefully read the email content
+2. Check if it relates to ANY existing request (outgoing or incoming)
+3. If it relates to an existing request, classify accordingly (NOT unclassified)
+4. Only use "unclassified" if the email has NO business purpose (spam, personal chat, etc.)
+5. For your example: A follow-up on request ID 6 should be "client_reminder", NOT "unclassified"
 """
         return context
 
@@ -149,6 +162,7 @@ Analysez cet email et classifiez-le selon les catégories définies.
                 cleaned_response = cleaned_response[:-3]
             
             result = json.loads(cleaned_response)
+
             
             # Validation des champs requis
             required_fields = ['classification', 'confidence', 'reasoning', 'related_requests']
