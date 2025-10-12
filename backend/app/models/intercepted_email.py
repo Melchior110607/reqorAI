@@ -27,7 +27,7 @@ class InterceptedEmail(Base):
     connection_id = Column(Integer, ForeignKey("email_connections.id"), nullable=False)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)  # Peut être null si pas reconnu
     
-    # Email data
+    # Email data (versions originales - stockées mais PAS envoyées à l'IA)
     message_id = Column(String, unique=True, nullable=False, index=True)  # ID unique du message (Gmail/Outlook)
     sender_email = Column(String, nullable=False)
     sender_name = Column(String)
@@ -35,6 +35,13 @@ class InterceptedEmail(Base):
     body = Column(Text, nullable=False)
     attachments = Column(Text)  # JSON string des pièces jointes
     email_thread_id = Column(String)  # ID du thread email
+    
+    # Email data anonymisées (versions avec PII masquées - ENVOYÉES À L'IA)
+    anonymized_subject = Column(Text)  # Sujet anonymisé
+    anonymized_body = Column(Text)  # Corps anonymisé
+    anonymized_sender_name = Column(String)  # Nom expéditeur anonymisé
+    pii_detected_count = Column(Integer, default=0)  # Nombre de PII détectées
+    pii_detection_metadata = Column(Text)  # JSON avec détails des PII
     
     # Matching data
     confidence_score = Column(Float, default=0.0)

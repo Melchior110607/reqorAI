@@ -190,13 +190,39 @@ class GmailWebhookService:
                 print(f"⚠️ No subscription found for connection {connection.id}")
                 return {"synced": 0, "duplicates": 0}
             
-            # Use Gmail service to fetch recent emails
-            # We'll fetch emails since last_sync (or last 10 emails if no last_sync)
-            result = self.gmail_service.get_recent_emails(
-                connection=connection,
-                max_results=10,
-                since_timestamp=connection.last_sync
-            )
+            # Use History API to fetch ONLY new emails since last history_id
+            if history_id and subscription.history_id:
+                print(f"🔍 Fetching changes since history ID {subscription.history_id}")
+                emails = self.gmail_service.get_emails_from_history(
+                    connection=connection,
+                    start_history_id=subscription.history_id
+                )
+            else:
+                # First notification or no history_id - fetch recent emails as fallback
+                print(f"📥 No previous history ID, fetching recent emails")
+                emails = self.gmail_service.get_recent_emails(
+                    connection=connection,
+                    max_results=10,
+                    since_timestamp=connection.last_sync
+                )
+            
+            # Process and save the emails to database
+            from app.services.email_service import EmailProcessingService
+            processing_service = EmailProcessingService(self.db)
+            
+            synced = 0
+            duplicates = 0
+            
+            for email_data in emails:
+                result = processing_service.process_intercepted_email(
+                    email_data,
+                    connection.id,
+                    connection.user_id
+                )
+                if result:
+                    synced += 1
+                else:
+                    duplicates += 1
             
             # Update subscription metadata
             subscription.last_notification_at = datetime.now(timezone.utc)
@@ -207,11 +233,11 @@ class GmailWebhookService:
             
             self.db.commit()
             
-            print(f"✅ Notification processed: {len(result)} emails fetched")
+            print(f"✅ Notification processed: {synced} emails saved, {duplicates} duplicates")
             
             return {
-                "synced": len(result),
-                "duplicates": 0  # GmailService handles duplicates
+                "synced": synced,
+                "duplicates": duplicates
             }
             
         except Exception as e:

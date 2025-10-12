@@ -10,7 +10,7 @@ celery_app = Celery(
     "projectai",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=['app.tasks.email_sync', 'app.tasks.webhook_renewal']
+    include=['app.tasks.webhook_renewal']  # Seulement webhook renewal, plus de polling
 )
 
 # Configuration Celery
@@ -26,15 +26,7 @@ celery_app.conf.update(
 
 # Configuration Celery Beat (tâches périodiques)
 celery_app.conf.beat_schedule = {
-    # ⚠️ DEPRECATED: Polling fallback (keep for safety, run rarely)
-    # Webhooks handle real-time notifications now
-    'sync-all-emails-fallback': {
-        'task': 'app.tasks.email_sync.sync_all_user_emails',
-        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours as fallback
-        'options': {'queue': 'email_sync'}
-    },
-    
-    # ✅ NEW: Webhook renewal tasks (critical for webhook reliability)
+    # ✅ Webhook renewal tasks (critical for webhook reliability)
     'renew-gmail-watches-daily': {
         'task': 'app.tasks.webhook_renewal.renew_gmail_watches',
         'schedule': crontab(minute=0, hour=2),  # Every day at 2:00 AM UTC
@@ -50,7 +42,6 @@ celery_app.conf.beat_schedule = {
 
 # Configuration des queues
 celery_app.conf.task_routes = {
-    'app.tasks.email_sync.*': {'queue': 'email_sync'},
     'app.tasks.webhook_renewal.*': {'queue': 'email_sync'},
 }
 

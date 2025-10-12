@@ -8,21 +8,37 @@ import {
   Mail, 
   Plus, 
   Trash2, 
-  RefreshCw, 
   CheckCircle, 
   XCircle, 
   AlertCircle,
   Clock,
-  ExternalLink
+  ExternalLink,
+  Shield
 } from 'lucide-react';
+
+interface PIISettings {
+  protection_level: 'none' | 'basic_regex' | 'advanced_presidio' | 'custom';
+  mask_emails: boolean;
+  mask_phones: boolean;
+  mask_persons: boolean;
+  mask_locations: boolean;
+  mask_dates: boolean;
+  mask_credit_cards: boolean;
+  mask_iban: boolean;
+  mask_urls: boolean;
+  mask_ip_addresses: boolean;
+  context_warning_acknowledged: boolean;
+}
 
 export default function EmailSettingsPage() {
   const [connections, setConnections] = useState<EmailConnection[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState<number | null>(null);
+  const [piiSettings, setPiiSettings] = useState<PIISettings | null>(null);
+  const [savingPII, setSavingPII] = useState(false);
 
   useEffect(() => {
     fetchConnections();
+    fetchPIISettings();
   }, []);
 
   const fetchConnections = async () => {
@@ -33,6 +49,40 @@ export default function EmailSettingsPage() {
       console.error('Error fetching connections:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPIISettings = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:8000/user/settings/pii', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setPiiSettings(data);
+    } catch (error) {
+      console.error('Error fetching PII settings:', error);
+    }
+  };
+
+  const savePIISettings = async () => {
+    if (!piiSettings) return;
+    setSavingPII(true);
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('http://localhost:8000/user/settings/pii', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(piiSettings)
+      });
+      alert('✅ Privacy settings saved');
+    } catch (error) {
+      alert('❌ Error saving settings');
+    } finally {
+      setSavingPII(false);
     }
   };
 
@@ -49,19 +99,8 @@ export default function EmailSettingsPage() {
     }
   };
 
-  const handleSync = async (connectionId: number) => {
-    setSyncing(connectionId);
-    try {
-      const result = await emailAPI.syncEmails(connectionId);
-      alert(result.message);
-      fetchConnections();
-    } catch (error) {
-      console.error('Error syncing emails:', error);
-      alert('Failed to sync emails');
-    } finally {
-      setSyncing(null);
-    }
-  };
+  // Note: Manual sync is no longer needed with webhooks.
+  // Emails are automatically synced in real-time via webhooks.
 
   const getProviderIcon =  (provider : EmailProvider) => {
     if (provider == EmailProvider.GMAIL) return (
@@ -230,15 +269,6 @@ export default function EmailSettingsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleSync(connection.id)}
-                          disabled={syncing === connection.id}
-                          className="text-blue-600 hover:text-blue-700"
-                        >
-                          <RefreshCw className={`w-4 h-4 ${syncing === connection.id ? 'animate-spin' : ''}`} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
                           onClick={() => handleDelete(connection.id)}
                           className="text-red-600 hover:text-red-700"
                         >
@@ -253,14 +283,108 @@ export default function EmailSettingsPage() {
           )}
         </div>
 
-        {/* Instructions */}
-        <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-lg font-medium text-blue-900 mb-2">How it works</h3>
-          <div className="text-sm text-blue-800 space-y-2">
-            <p>1. <strong>Connect your email:</strong> Authorize access to your Gmail or Outlook account</p>
-            <p>2. <strong>Automatic processing:</strong> Incoming emails are automatically matched to your clients</p>
-            <p>3. <strong>AI classification:</strong> Our AI analyzes emails and categorizes them (responses, new requests, etc.)</p>
-            <p>4. <strong>Smart actions:</strong> Requests are automatically updated based on email content</p>
+        {/* Privacy & Data Protection */}
+        <div className="mt-8 bg-white shadow rounded-lg">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+            <Shield className="w-5 h-5 text-blue-600" />
+            <h2 className="text-lg font-medium text-gray-900">Privacy & Data Protection</h2>
+          </div>
+
+          <div className="p-6">
+            {!piiSettings ? (
+              <p className="text-gray-500">Loading...</p>
+            ) : (
+              <div className="space-y-6">
+                {/* Protection Level */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Protection Level
+                  </label>
+                  <div className="space-y-2">
+                    {[
+                      { value: 'none', label: 'No Protection', desc: 'Maximum AI context, no privacy', recommended: false },
+                      { value: 'basic_regex', label: 'Basic Protection (Regex)', desc: 'Fast detection: emails, phones, credit cards', recommended: true },
+                      { value: 'advanced_presidio', label: 'Advanced Protection (AI)', desc: 'Also masks names, locations, organizations', recommended: true },
+                      { value: 'custom', label: 'Custom Configuration', desc: 'Choose exactly what to mask', recommended: false }
+                    ].map((level) => (
+                      <label key={level.value} className={`flex items-start p-3 border-2 rounded-lg cursor-pointer ${
+                        piiSettings.protection_level === level.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}>
+                        <input
+                          type="radio"
+                          name="protection_level"
+                          value={level.value}
+                          checked={piiSettings.protection_level === level.value}
+                          onChange={(e) => setPiiSettings({ ...piiSettings, protection_level: e.target.value as any })}
+                          className="mt-1 mr-3"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm text-gray-900">{level.label}</span>
+                            {level.recommended && (
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">Recommended</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-600 mt-0.5">{level.desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Options */}
+                {piiSettings.protection_level === 'custom' && (
+                  <div className="border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      Data Types to Mask
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { key: 'mask_emails', label: 'Emails' },
+                        { key: 'mask_phones', label: 'Phone Numbers' },
+                        { key: 'mask_credit_cards', label: 'Credit Cards' },
+                        { key: 'mask_iban', label: 'IBAN' },
+                        { key: 'mask_persons', label: 'Person Names', warning: true },
+                        { key: 'mask_locations', label: 'Locations', warning: true },
+                        { key: 'mask_dates', label: 'Dates', warning: true },
+                        { key: 'mask_urls', label: 'URLs' },
+                      ].map((item) => (
+                        <label key={item.key} className="flex items-center p-2 border border-gray-300 rounded hover:bg-gray-50 bg-white cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={piiSettings[item.key as keyof PIISettings] as boolean}
+                            onChange={(e) => setPiiSettings({ ...piiSettings, [item.key]: e.target.checked })}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-900">{item.label}</span>
+                          {item.warning && (
+                            <span className="ml-1 text-yellow-500" title="May reduce AI context">⚠️</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Warning */}
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-sm">
+                  <p className="text-yellow-800">
+                    <strong>Note:</strong> More masking = less context for AI. Find the right balance between privacy and effectiveness.
+                  </p>
+                </div>
+
+                {/* Save Button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={savePIISettings}
+                    disabled={savingPII}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  >
+                    {savingPII ? 'Saving...' : 'Save Privacy Settings'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

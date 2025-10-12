@@ -135,6 +135,14 @@ class EmailProcessingService:
     def __init__(self, db: Session):
         self.db = db
         self.matching_service = EmailMatchingService(db)
+        
+        # Initialize PII detection service (passe la DB session)
+        try:
+            from app.services.pii_detection_service import PIIDetectionService
+            self.pii_service = PIIDetectionService(db_session=db)
+        except Exception as e:
+            print(f"⚠️ PII service initialization failed: {str(e)}, using fallback")
+            self.pii_service = None
 
     def process_intercepted_email(self, email_data: dict, connection_id: int, user_id: int) -> Optional[InterceptedEmail]:
         """Traite un email intercepté (retourne None si doublon)"""
@@ -153,20 +161,69 @@ class EmailProcessingService:
             return None
         
         sender_email = email_data.get('sender_email', '').lower()
+        sender_name = email_data.get('sender_name', '')
+        subject = email_data.get('subject', '')
+        body = email_data.get('body', '')
         
         # Trouver le client correspondant
         client, confidence, rule = self.matching_service.find_matching_client(sender_email, user_id)
+        
+        # ⚠️ IMPORTANT : Ne stocker QUE les emails matchés avec un client
+        if not client:
+            print(f"📭 Email from {sender_email} ignored - no client match")
+            return None
+        
+        print(f"✅ Email matched with client: {client.company} (confidence: {confidence})")
+        
+        # 🔒 PROTECTION DES DONNÉES SENSIBLES : Anonymiser si client matché
+        anonymized_subject = subject
+        anonymized_body = body
+        anonymized_sender_name = sender_name
+        pii_count = 0
+        pii_metadata = {}
+        
+        if self.pii_service:
+            try:
+                print(f"🔒 Anonymizing email for client {client.company}")
+                pii_result = self.pii_service.anonymize_email(
+                    subject=subject,
+                    body=body,
+                    sender_email=sender_email,
+                    sender_name=sender_name,
+                    user_id=user_id  # Passer user_id pour charger ses préférences
+                )
+                
+                anonymized_subject = pii_result['anonymized_subject']
+                anonymized_body = pii_result['anonymized_body']
+                anonymized_sender_name = pii_result['anonymized_sender_name']
+                pii_count = pii_result['pii_count']
+                pii_metadata = pii_result
+                
+                if pii_count > 0:
+                    print(f"✅ Anonymized {pii_count} PII entities for client {client.company}")
+                
+            except Exception as e:
+                print(f"⚠️ PII anonymization failed: {str(e)}, storing original")
+                # Continue with original data if anonymization fails
         
         # Créer l'enregistrement d'email intercepté
         intercepted_email = InterceptedEmail(
             user_id=user_id,
             connection_id=connection_id,
-            client_id=client.id if client else None,
+            client_id=client.id,  # On sait que client existe (vérifié plus haut)
             message_id=message_id,
+            # Données originales (stockées mais PAS envoyées à l'IA)
             sender_email=sender_email,
-            sender_name=email_data.get('sender_name', ''),
-            subject=email_data.get('subject', ''),
-            body=email_data.get('body', ''),
+            sender_name=sender_name,
+            subject=subject,
+            body=body,
+            # Données anonymisées (ENVOYÉES À L'IA)
+            anonymized_subject=anonymized_subject,
+            anonymized_body=anonymized_body,
+            anonymized_sender_name=anonymized_sender_name,
+            pii_detected_count=pii_count,
+            pii_detection_metadata=json.dumps(pii_metadata) if pii_metadata else None,
+            # Autres données
             attachments=json.dumps(email_data.get('attachments', [])),
             email_thread_id=email_data.get('thread_id'),
             confidence_score=confidence,

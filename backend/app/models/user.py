@@ -32,3 +32,4 @@ class User(Base):
     requests = relationship("Request", back_populates="user", cascade="all, delete-orphan")
     email_connections = relationship("EmailConnection", back_populates="user", cascade="all, delete-orphan")
     intercepted_emails = relationship("InterceptedEmail", back_populates="user", cascade="all, delete-orphan")
+    pii_settings = relationship("UserPIISettings", back_populates="user", uselist=False, cascade="all, delete-orphan")

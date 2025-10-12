@@ -23,7 +23,12 @@ class AuthenticationError(Exception):
 class OutlookService:
     def __init__(self, db: Session):
         self.db = db
-        self.scopes = ['User.Read', 'Mail.Read', 'Mail.Send', 'offline_access']
+        # Note: Ne PAS inclure 'offline_access', 'openid', 'profile' 
+        # MSAL les ajoute automatiquement et cela cause une erreur frozenset
+        # Utiliser les scopes Graph API complets pour éviter les conflits
+        self.scopes = ['https://graph.microsoft.com/User.Read', 
+                       'https://graph.microsoft.com/Mail.Read', 
+                       'https://graph.microsoft.com/Mail.Send']
         self.authority = 'https://login.microsoftonline.com/common'
         
         if not settings.outlook_client_id or not settings.outlook_client_secret:
@@ -66,9 +71,11 @@ class OutlookService:
         callback_url = f"{settings.base_url}/email/callback/outlook"
         
         # Échanger le code contre des tokens
+        # Note: MSAL ajoute automatiquement openid, profile, offline_access
+        # On doit passer les scopes comme une liste explicite
         result = self.app.acquire_token_by_authorization_code(
             code=code,
-            scopes=self.scopes,
+            scopes=list(self.scopes),  # Convertir explicitement en list
             redirect_uri=callback_url
         )
         
@@ -105,7 +112,12 @@ class OutlookService:
         
         connection.access_token = access_token
         connection.refresh_token = refresh_token
-        connection.expires_at = result.get('expires_in')  # TODO: Calculer la vraie date d'expiration
+        
+        # Calculer la date d'expiration réelle (expires_in est en secondes)
+        from datetime import datetime, timedelta, timezone
+        expires_in_seconds = result.get('expires_in', 3600)  # Défaut 1h
+        connection.expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+        
         connection.status = ConnectionStatus.ACTIVE
         
         self.db.commit()
@@ -211,6 +223,47 @@ class OutlookService:
             error_msg = f"Unexpected error: {type(e).__name__} - {str(e)}"
             print(f"❌ {error_msg}")
             raise Exception(error_msg)
+    
+    def get_emails_from_delta(self, connection: EmailConnection, delta_link: str) -> List[Dict[str, Any]]:
+        """
+        Récupère uniquement les NOUVEAUX emails depuis un deltaLink donné
+        Utilise l'API Delta de Microsoft Graph pour une efficacité maximale
+        """
+        try:
+            headers = {'Authorization': f'Bearer {connection.access_token}'}
+            
+            # Utiliser le deltaLink pour récupérer SEULEMENT les changements
+            response = requests.get(delta_link, headers=headers, timeout=10)
+            
+            if response.status_code == 401:
+                # Token expiré
+                if self.refresh_token(connection):
+                    headers['Authorization'] = f'Bearer {connection.access_token}'
+                    response = requests.get(delta_link, headers=headers, timeout=10)
+                else:
+                    raise AuthenticationError("Failed to refresh token")
+            
+            if response.status_code != 200:
+                print(f"⚠️ Delta API error: {response.status_code}, falling back to recent emails")
+                return self.get_recent_emails(connection, max_results=10)
+            
+            data = response.json()
+            messages = data.get('value', [])
+            
+            # Filtrer uniquement les nouveaux messages (pas les suppressions/modifications)
+            new_messages = [msg for msg in messages if '@removed' not in msg]
+            
+            emails = []
+            for message in new_messages:
+                email_data = self._parse_outlook_message(message)
+                emails.append(email_data)
+            
+            print(f"✅ Fetched {len(emails)} NEW emails from delta for {connection.email_address}")
+            return emails
+            
+        except Exception as e:
+            print(f"❌ Error fetching delta: {str(e)}, falling back")
+            return self.get_recent_emails(connection, max_results=10)
 
     def _parse_outlook_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Parse un message Outlook"""

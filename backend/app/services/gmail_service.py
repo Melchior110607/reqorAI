@@ -236,6 +236,82 @@ class GmailService:
             print(f"❌ {error_msg}")
             raise Exception(error_msg)
 
+    def get_emails_from_history(self, connection: EmailConnection, start_history_id: int) -> List[Dict[str, Any]]:
+        """
+        Récupère uniquement les NOUVEAUX emails depuis un history_id donné
+        Utilise l'History API de Gmail pour une efficacité maximale
+        """
+        try:
+            credentials = Credentials(
+                token=connection.access_token,
+                refresh_token=connection.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.gmail_client_id,
+                client_secret=settings.gmail_client_secret
+            )
+            
+            # Rafraîchir le token si expiré
+            if credentials.expired and credentials.refresh_token:
+                credentials.refresh(GoogleRequest())
+                connection.access_token = credentials.token
+                connection.expires_at = credentials.expiry
+                self.db.commit()
+            
+            service = build('gmail', 'v1', credentials=credentials)
+            
+            # Utiliser l'History API pour récupérer SEULEMENT les changements
+            history_result = service.users().history().list(
+                userId='me',
+                startHistoryId=str(start_history_id),
+                historyTypes=['messageAdded']  # Seulement les nouveaux messages
+            ).execute()
+            
+            if 'history' not in history_result:
+                print(f"📭 No new messages since history ID {start_history_id}")
+                return []
+            
+            # Extraire les IDs des nouveaux messages
+            new_message_ids = set()
+            for history_record in history_result.get('history', []):
+                for message_added in history_record.get('messagesAdded', []):
+                    message = message_added.get('message', {})
+                    # Filtrer uniquement les messages dans INBOX
+                    if 'INBOX' in message.get('labelIds', []):
+                        new_message_ids.add(message['id'])
+            
+            if not new_message_ids:
+                print(f"📭 No new inbox messages in history")
+                return []
+            
+            # Récupérer les détails de chaque nouveau message
+            emails = []
+            for msg_id in new_message_ids:
+                msg = service.users().messages().get(
+                    userId='me',
+                    id=msg_id,
+                    format='full'
+                ).execute()
+                
+                email_data = self._parse_gmail_message(msg)
+                emails.append(email_data)
+            
+            print(f"✅ Fetched {len(emails)} NEW emails from history for {connection.email_address}")
+            return emails
+            
+        except HttpError as e:
+            if e.resp.status == 404:
+                # History ID trop ancien, fallback sur get_recent_emails
+                print(f"⚠️ History ID {start_history_id} expired, falling back to recent emails")
+                return self.get_recent_emails(connection, max_results=10)
+            elif e.resp.status == 401:
+                raise AuthenticationError(f"Authentication error: {str(e)}")
+            else:
+                raise Exception(f"Gmail API error: {e.resp.status} - {str(e)}")
+        
+        except Exception as e:
+            print(f"❌ Error fetching history: {str(e)}")
+            raise
+
     def _parse_gmail_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Parse un message Gmail"""
         headers = {h['name']: h['value'] for h in message['payload'].get('headers', [])}

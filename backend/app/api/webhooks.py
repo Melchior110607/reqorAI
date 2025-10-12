@@ -19,6 +19,15 @@ from app.services.outlook_webhook_service import OutlookWebhookService
 router = APIRouter(prefix="/webhook", tags=["webhooks"])
 
 
+@router.get("/gmail")
+async def gmail_webhook_verify():
+    """
+    GET endpoint for Google Pub/Sub verification
+    Google sends GET requests to verify the endpoint is valid
+    """
+    return {"status": "ok", "message": "Gmail webhook endpoint is ready"}
+
+
 @router.post("/gmail")
 async def gmail_webhook(
     request: Request,
@@ -50,12 +59,12 @@ async def gmail_webhook(
         
         print(f"📨 Gmail webhook received: {email_data}")
         
-        # Extract email address from message attributes
-        email_address = message.get("attributes", {}).get("emailAddress")
+        # Extract email address and history ID from decoded data
+        email_address = email_data.get("emailAddress")
         history_id = email_data.get("historyId")
         
         if not email_address:
-            print("⚠️ No email address in Pub/Sub message")
+            print(f"⚠️ No email address in Pub/Sub message. Full data: {email_data}")
             return {"status": "ignored", "reason": "no_email_address"}
         
         # Find connection
@@ -111,7 +120,8 @@ async def outlook_webhook_validation(
 async def outlook_webhook(
     request: Request,
     db: Session = Depends(get_db),
-    client_state: Optional[str] = Header(None, alias="clientState")
+    client_state: Optional[str] = Header(None, alias="clientState"),
+    validationToken: Optional[str] = None
 ):
     """
     Receives webhook notifications from Microsoft Graph API
@@ -119,6 +129,13 @@ async def outlook_webhook(
     Format: https://learn.microsoft.com/en-us/graph/webhooks#processing-the-change-notification
     """
     try:
+        # Handle validation request (Microsoft sends this as query parameter)
+        if validationToken:
+            print(f"✅ Outlook validation request received: {validationToken[:20]}...")
+            # Must respond with plain text validation token
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content=validationToken, status_code=200)
+        
         body = await request.json()
         
         # Handle validation request (alternative method)

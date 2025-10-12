@@ -88,12 +88,28 @@ export default function EmailCallbackPage() {
               </div>
               <h2 className="mt-4 text-lg font-medium text-gray-900">Connection Failed</h2>
               <p className="mt-2 text-sm text-gray-600">{message}</p>
-              <button 
-                onClick={() => window.close()}
-                className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
-              >
-                Close
-              </button>
+              <div className="mt-4 flex gap-3 justify-center">
+                <button 
+                  onClick={() => {
+                    // Essayer de fermer la fenêtre (fonctionne si popup)
+                    // Sinon rediriger vers email settings
+                    if (window.opener) {
+                      window.close();
+                    } else {
+                      window.location.href = '/email-settings';
+                    }
+                  }}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={() => window.location.href = '/email-settings'}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Return to Settings
+                </button>
+              </div>
             </>
           )}
         </div>
