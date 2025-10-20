@@ -54,3 +54,33 @@ def renew_outlook_subscriptions():
     finally:
         db.close()
 
+
+@celery_app.task(name='app.tasks.webhook_renewal.send_pending_reminders')
+def send_pending_reminders():
+    """
+    Periodic task: Send reminders for outgoing requests
+    Should be executed multiple times per day (e.g., every 6 hours)
+    """
+    db = SessionLocal()
+    try:
+        print("🔔 Starting reminder sending task...")
+        
+        from app.services.reminder_service import ReminderService
+        
+        reminder_service = ReminderService(db)
+        result = reminder_service.process_pending_reminders()
+        
+        print(f"✅ Reminder sending completed: {result}")
+        return result
+        
+    except Exception as e:
+        print(f"❌ Reminder sending error: {str(e)}")
+        return {'error': str(e)}
+    finally:
+        db.close()
+
+
+# NOTE: update_overdue_requests task removed
+# Overdue status is now computed dynamically using Request.is_overdue property
+# No need for periodic checks!
+

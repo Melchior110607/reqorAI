@@ -9,6 +9,10 @@ from app.models.email_connection import EmailConnection
 from app.models.client_email_rule import ClientEmailRule
 from app.models.intercepted_email import InterceptedEmail
 from app.models.sync_log import SyncLog
+from app.models.user_pii_settings import UserPIISettings
+from app.models.webhook_subscription import WebhookSubscription
+from app.models.knowledge_base import KnowledgeDocument
+from app.models.knowledge_chunk import KnowledgeChunk
 
 __all__ = [
     'User',
@@ -17,6 +21,10 @@ __all__ = [
     'EmailConnection',
     'ClientEmailRule',
     'InterceptedEmail',
-    'SyncLog'
+    'SyncLog',
+    'UserPIISettings',
+    'WebhookSubscription',
+    'KnowledgeDocument',
+    'KnowledgeChunk'
 ]
 

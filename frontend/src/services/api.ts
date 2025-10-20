@@ -117,6 +117,98 @@ export const requestsAPI = {
   delete: async (id: number): Promise<void> => {
     await api.delete(`/requests/${id}`);
   },
+
+  regenerateDraft: async (requestId: number): Promise<any> => {
+    const response = await api.post(`/requests/${requestId}/regenerate-draft`);
+    return response.data;
+  },
+
+  sendDraftResponse: async (requestId: number): Promise<any> => {
+    const response = await api.post(`/requests/${requestId}/send-draft`);
+    return response.data;
+  },
+
+  configureReminder: async (requestId: number, config: {
+    reminder_enabled: boolean;
+    reminder_frequency: string;
+    reminder_message?: string;
+  }): Promise<any> => {
+    const response = await api.post(`/requests/${requestId}/configure-reminder`, null, {
+      params: config
+    });
+    return response.data;
+  },
+
+  sendReminderNow: async (requestId: number): Promise<any> => {
+    const response = await api.post(`/requests/${requestId}/send-reminder-now`);
+    return response.data;
+  },
+
+  getFollowUps: async (requestId: number): Promise<any[]> => {
+    const response = await api.get(`/requests/${requestId}/follow-ups`);
+    return response.data;
+  },
+
+  getConversationThread: async (requestId: number): Promise<any> => {
+    const response = await api.get(`/requests/${requestId}/conversation-thread`);
+    return response.data;
+  },
+};
+
+// Dashboard API
+export const dashboardAPI = {
+  getOverview: async (): Promise<any> => {
+    const response = await api.get('/dashboard/overview');
+    return response.data;
+  },
+
+  getCalendar: async (year: number, month: number): Promise<any> => {
+    const response = await api.get('/dashboard/calendar', {
+      params: { year, month }
+    });
+    return response.data;
+  },
+
+  getUpcoming: async (days?: number): Promise<any[]> => {
+    const response = await api.get('/dashboard/upcoming', {
+      params: days ? { days } : {}
+    });
+    return response.data;
+  },
+
+  getOverdueCount: async (): Promise<number> => {
+    const response = await api.get('/dashboard/overdue-count');
+    return response.data;
+  },
+};
+
+// Knowledge Base API
+export const knowledgeAPI = {
+  uploadDocument: async (file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/knowledge/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+  },
+  
+  getDocuments: async (): Promise<any[]> => {
+    const response = await api.get('/knowledge/documents');
+    return response.data;
+  },
+  
+  deleteDocument: async (docId: number): Promise<void> => {
+    await api.delete(`/knowledge/documents/${docId}`);
+  }
+};
+
+// AI Agent API
+export const agentAPI = {
+  processEmail: async (emailId: number): Promise<any> => {
+    const response = await api.post(`/email/process-with-agent/${emailId}`);
+    return response.data;
+  }
 };
 
 export default api;

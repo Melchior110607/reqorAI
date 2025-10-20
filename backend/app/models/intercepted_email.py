@@ -35,6 +35,8 @@ class InterceptedEmail(Base):
     body = Column(Text, nullable=False)
     attachments = Column(Text)  # JSON string des pièces jointes
     email_thread_id = Column(String)  # ID du thread email
+    conversation_thread_id = Column(String, nullable=True)  # Gmail/Outlook conversation thread ID
+    in_reply_to_message_id = Column(String, nullable=True)  # Original message being replied to
     
     # Email data anonymisées (versions avec PII masquées - ENVOYÉES À L'IA)
     anonymized_subject = Column(Text)  # Sujet anonymisé
@@ -51,12 +53,17 @@ class InterceptedEmail(Base):
     ai_classification = Column(Enum(EmailClassification), default=EmailClassification.UNCLASSIFIED)
     ai_confidence = Column(Float, default=0.0)
     ai_reasoning = Column(Text)  # Explication de l'IA
+    ai_sub_classifications = Column(Text, nullable=True)  # JSON array pour MIXED: [{"classification": "new_request", "request_ids": [1,2]}, ...]
     related_request_ids = Column(Text)  # JSON array des IDs de requests liées
     
     # Processing
     processing_status = Column(Enum(ProcessingStatus), default=ProcessingStatus.PENDING)
     processed_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
+    
+    # AI Agent tracking
+    agent_processed = Column(Boolean, default=False)
+    agent_action_taken = Column(Text, nullable=True)
     
     # Timestamps
     email_received_at = Column(DateTime(timezone=True), nullable=False)

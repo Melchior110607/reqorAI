@@ -9,10 +9,8 @@ import {
   Users, 
   User,
   Mail,
-  Brain,
-  Target,
-  Clock,
   Sparkles,
+  BookOpen,
 } from 'lucide-react';
 
 export function Sidebar() {
@@ -22,12 +20,10 @@ export function Sidebar() {
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/outgoing-requests', label: 'Outgoing', icon: ArrowUpRight },
     { href: '/incoming-requests', label: 'Incoming', icon: ArrowDownLeft },
+    { href: '/knowledge-base', label: 'Knowledge Base', icon: BookOpen },
     { href: '/clients', label: 'Clients', icon: Users },
     { href: '/email-settings', label: 'Email', icon: Mail },
-    { href: '/ai-monitoring', label: 'AI Debug', icon: Brain },
-    { href: '/client-matching', label: 'Matching Test', icon: Target },
     { href: '/ai-classification', label: 'AI Classification', icon: Sparkles },
-    { href: '/auto-sync', label: 'Auto Sync', icon: Clock },
     { href: '/profile', label: 'Profile', icon: User },
   ];
 

@@ -40,7 +40,7 @@ class AIClassificationService:
         # Appel à l'IA
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": context}
@@ -55,14 +55,39 @@ class AIClassificationService:
             
             # Mettre à jour l'email intercepté
             intercepted_email.ai_classification = result['classification']
-            intercepted_email.ai_confidence = result['confidence']
-            intercepted_email.ai_reasoning = result['reasoning']
+            intercepted_email.ai_confidence = result.get('confidence')
+            intercepted_email.ai_reasoning = result.get('reasoning')
             intercepted_email.related_request_ids = json.dumps(result['related_requests'])
+            
+            # Pour MIXED, stocker les sub-classifications
+            if result['classification'] == 'mixed' and 'sub_classifications' in result:
+                intercepted_email.ai_sub_classifications = json.dumps(result['sub_classifications'])
+            
             intercepted_email.processing_status = ProcessingStatus.COMPLETED
             intercepted_email.processed_at = func.now()
             
             self.db.commit()
             
+            # Auto-trigger AI agent processing for specific classifications
+            agent_result = None
+            if result['classification'] in [
+                EmailClassification.RESPONSE_TO_REQUEST.value, 
+                EmailClassification.NEW_REQUEST.value,
+                EmailClassification.CLIENT_REMINDER.value,
+                EmailClassification.DISSATISFACTION.value,
+                EmailClassification.MIXED.value  # MIXED sera traité par agent_mixed
+            ]:
+                try:
+                    print(f"🤖 Auto-triggering agent for classification: {result['classification']}")
+                    from app.services.ai_agent_service import AIAgentService
+                    agent_service = AIAgentService(self.db)
+                    agent_result = agent_service.process_classified_email(intercepted_email)
+                    print(f"✅ Agent processing completed: {agent_result.get('message', 'Success')}")
+                except Exception as agent_error:
+                    print(f"⚠️ Agent processing failed (non-critical): {str(agent_error)}")
+                    # Don't fail classification if agent fails
+            
+            result['agent_result'] = agent_result
             return result
             
         except Exception as e:
@@ -76,30 +101,50 @@ class AIClassificationService:
         return """
 You are an AI assistant specializing in analyzing B2B emails for a request management system.
 
-Your task is to classify each email according to these EXACT categories. You MUST use the exact category name:
+Your task is to classify each email according to these EXACT categories:
 
 1. response_to_request: Email is responding to one of our OUTGOING requests (we asked them for something)
 2. new_request: New customer request that does NOT relate to any existing incoming/outgoing requests
 3. confirmation: Customer confirms they received our response
 4. client_reminder: Customer is following up / reminding us about an INCOMING request (they asked us for something and we haven't responded yet)
 5. dissatisfaction: Customer expresses dissatisfaction or requests additional information
-6. mixed: Email contains multiple types above OR multiple requests
+6. mixed: Email contains MULTIPLE different classifications (e.g., new request + response, or multiple new requests)
 7. unclassified: ONLY use this if the email is completely unrelated to business (spam, personal chat, etc.)
 
 CRITICAL RULES:
 - If the email relates to ANY existing request, DO NOT use "unclassified"
-- A follow-up on an existing incoming request = "client_reminder"
-- A response to our outgoing request = "response_to_request"
-- "unclassified" means the email has NO business purpose
+- If email has multiple purposes, use "mixed" and specify sub_classifications
 - Always link related request IDs in the related_requests array
 
-Respond ONLY in valid JSON format (no markdown, no code blocks):
+FOR SIMPLE CLASSIFICATIONS (not mixed):
+Respond in JSON format:
 {
   "classification": "response_to_request",
-  "confidence": 0.95,
-  "reasoning": "Clear explanation of why this classification was chosen",
   "related_requests": [1, 2]
 }
+
+FOR MIXED CLASSIFICATIONS:
+YOU MUST SEGMENT THE EMAIL CONTENT into separate parts for each classification.
+Extract the relevant portion of the email for each sub-classification.
+
+Respond in JSON format:
+{
+  "classification": "mixed",
+  "sub_classifications": [
+    {
+      "classification": "new_request",
+      "related_requests": [],
+      "email_segment": "The specific part of the email about the new request..."
+    },
+    {
+      "classification": "response_to_request",
+      "related_requests": [5],
+      "email_segment": "The specific part of the email responding to request 5..."
+    }
+  ]
+}
+
+IMPORTANT: Each sub_classification MUST have an "email_segment" field containing ONLY the relevant portion of the original email.
 
 Valid classification values: response_to_request, new_request, confirmation, client_reminder, dissatisfaction, mixed, unclassified
 """
@@ -162,26 +207,39 @@ INSTRUCTIONS:
                 cleaned_response = cleaned_response[:-3]
             
             result = json.loads(cleaned_response)
-
-            
-            # Validation des champs requis
-            required_fields = ['classification', 'confidence', 'reasoning', 'related_requests']
-            for field in required_fields:
-                if field not in result:
-                    raise ValueError(f"Missing required field: {field}")
             
             # Validation de la classification
             valid_classifications = [e.value for e in EmailClassification]
-            if result['classification'] not in valid_classifications:
+            if 'classification' not in result or result['classification'] not in valid_classifications:
                 result['classification'] = EmailClassification.UNCLASSIFIED.value
             
-            # Validation du score de confiance
-            if not isinstance(result['confidence'], (int, float)) or not (0 <= result['confidence'] <= 1):
-                result['confidence'] = 0.0
-            
             # Validation des demandes liées
-            if not isinstance(result['related_requests'], list):
+            if 'related_requests' not in result or not isinstance(result['related_requests'], list):
                 result['related_requests'] = []
+            
+            # Pour MIXED, valider sub_classifications
+            if result['classification'] == 'mixed':
+                if 'sub_classifications' not in result or not isinstance(result['sub_classifications'], list):
+                    # Fallback si mal formaté
+                    result['sub_classifications'] = []
+                else:
+                    # Valider chaque sub-classification
+                    validated_subs = []
+                    for sub in result['sub_classifications']:
+                        if isinstance(sub, dict) and 'classification' in sub:
+                            if sub['classification'] in valid_classifications:
+                                if 'related_requests' not in sub:
+                                    sub['related_requests'] = []
+                                # IMPORTANT: email_segment est requis pour MIXED
+                                if 'email_segment' not in sub:
+                                    print(f"⚠️ Missing email_segment in sub-classification {sub['classification']}")
+                                    sub['email_segment'] = ""
+                                validated_subs.append(sub)
+                    result['sub_classifications'] = validated_subs
+            
+            # Backwards compatibility: set confidence and reasoning to None (deprecated)
+            result['confidence'] = None
+            result['reasoning'] = None
             
             return result
             
@@ -189,7 +247,8 @@ INSTRUCTIONS:
             # Fallback en cas d'erreur de parsing
             return {
                 'classification': EmailClassification.UNCLASSIFIED.value,
-                'confidence': 0.0,
-                'reasoning': f'Erreur de parsing de la réponse IA: {str(e)}',
-                'related_requests': []
+                'confidence': None,
+                'reasoning': None,
+                'related_requests': [],
+                'sub_classifications': []
             }

@@ -16,7 +16,6 @@ from app.models.email_connection import EmailConnection, EmailProvider
 from app.models.intercepted_email import InterceptedEmail
 from app.models.client import Client
 from app.models.user import User
-from app.models.sync_log import SyncLog
 from app.api.dependencies import get_current_user
 from app.services.gmail_service import GmailService
 from app.services.outlook_service import OutlookService
@@ -204,72 +203,6 @@ def setup_webhook(
             detail=f"Failed to setup webhook: {str(e)}"
         )
 
-@router.post("/sync/{provider_name}")
-def sync_emails_by_provider_name(
-    provider_name: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Synchronise manuellement les emails - DEBUG"""
-    # Trouver la connexion de l'utilisateur pour ce provider
-    provider = EmailProvider.GMAIL if provider_name == 'gmail' else EmailProvider.OUTLOOK
-    connection = db.query(EmailConnection).filter(
-        EmailConnection.user_id == current_user.id,
-        EmailConnection.provider == provider
-    ).first()
-    
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pas de connexion {provider_name} trouvée. Connectez-vous d'abord avec OAuth."
-        )
-    
-    try:
-        from datetime import datetime, timezone
-        
-        # Récupérer uniquement les emails depuis la dernière sync
-        since_timestamp = connection.last_sync if connection.last_sync else None
-        
-        if connection.provider == EmailProvider.GMAIL:
-            gmail_service = GmailService(db)
-            emails = gmail_service.get_recent_emails(connection, max_results=50, since_timestamp=since_timestamp)
-        elif connection.provider == EmailProvider.OUTLOOK:
-            outlook_service = OutlookService(db)
-            emails = outlook_service.get_recent_emails(connection, max_results=50, since_timestamp=since_timestamp)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported provider"
-            )
-        
-        # Traiter chaque email avec anti-doublon intégré
-        processing_service = EmailProcessingService(db)
-        processed_count = 0
-        duplicate_count = 0
-        
-        for email_data in emails:
-            result = processing_service.process_intercepted_email(email_data, connection.id, current_user.id)
-            if result:
-                processed_count += 1
-            else:
-                duplicate_count += 1
-        
-        # Mettre à jour last_sync
-        connection.last_sync = datetime.now(timezone.utc)
-        db.commit()
-        
-        message = f"✅ {processed_count} nouveaux emails"
-        if duplicate_count > 0:
-            message += f" ({duplicate_count} doublons évités)"
-        
-        return {"message": message, "count": processed_count, "duplicates": duplicate_count}
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Email sync failed: {str(e)}"
-        )
-
 @router.get("/intercepted", response_model=List[InterceptedEmailWithClient])
 def get_intercepted_emails(
     current_user: User = Depends(get_current_user),
@@ -373,9 +306,10 @@ def classify_email(
         return EmailClassificationResponse(
             email_id=email_id,
             classification=classification_enum,
-            confidence=result['confidence'],
-            reasoning=result['reasoning'],
-            related_requests=result['related_requests']
+            confidence=result.get('confidence'),
+            reasoning=result.get('reasoning'),
+            related_requests=result['related_requests'],
+            sub_classifications=result.get('sub_classifications')
         )
         
     except Exception as e:
@@ -569,21 +503,67 @@ def match_clients_to_emails(
 #             detail=f"Webhook processing failed: {str(e)}"
 #         )
 
-@router.get("/sync-logs")
-def get_sync_logs(
-    limit: int = 50,
+@router.post("/webhook/renew-all")
+def renew_all_webhooks(
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Récupère les logs de synchronisation automatique"""
-    logs = db.query(SyncLog).order_by(SyncLog.created_at.desc()).limit(limit).all()
+    """Renouvelle manuellement tous les webhooks de l'utilisateur"""
+    from app.services.gmail_webhook_service import GmailWebhookService
+    from app.services.outlook_webhook_service import OutlookWebhookService
     
-    return [{
-        "id": log.id,
-        "sync_type": log.sync_type,
-        "total_synced": log.total_synced,
-        "total_duplicates": log.total_duplicates,
-        "connections_processed": log.connections_processed,
-        "details": log.details,
-        "error": log.error,
-        "created_at": log.created_at
-    } for log in logs]
+    results = {}
+    
+    # Renouveler Gmail
+    try:
+        gmail_service = GmailWebhookService(db)
+        gmail_result = gmail_service.check_and_renew_expiring_watches()
+        results['gmail'] = gmail_result
+    except Exception as e:
+        results['gmail'] = {'error': str(e)}
+    
+    # Renouveler Outlook  
+    try:
+        outlook_service = OutlookWebhookService(db)
+        outlook_result = outlook_service.check_and_renew_expiring_subscriptions()
+        results['outlook'] = outlook_result
+    except Exception as e:
+        results['outlook'] = {'error': str(e)}
+    
+    return results
+
+@router.post("/process-with-agent/{email_id}")
+def process_email_with_agent(
+    email_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Trigger agent processing for a classified email"""
+    from app.services.ai_agent_service import AIAgentService
+    
+    email = db.query(InterceptedEmail).filter(
+        InterceptedEmail.id == email_id,
+        InterceptedEmail.user_id == current_user.id
+    ).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    if email.ai_classification == "unclassified":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email must be classified first"
+        )
+    
+    try:
+        agent_service = AIAgentService(db)
+        result = agent_service.process_classified_email(email)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Agent processing failed: {str(e)}"
+        )

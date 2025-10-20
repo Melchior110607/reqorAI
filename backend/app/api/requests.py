@@ -35,10 +35,29 @@ def create_request(
     if request_data.email_recipients:
         email_recipients_json = json.dumps(request_data.email_recipients)
     
+    # Auto-assign email connection for outgoing requests if not provided
+    email_connection_id = request_data.email_connection_id
+    if request_data.type == RequestType.OUTGOING and not email_connection_id:
+        from app.models.email_connection import EmailConnection
+        # Get first available email connection for this user
+        first_connection = db.query(EmailConnection).filter(
+            EmailConnection.user_id == current_user.id
+        ).first()
+        if first_connection:
+            email_connection_id = first_connection.id
+    
+    # Auto-assign due_date if not provided (default to 7 days from now)
+    due_date = request_data.due_date
+    if not due_date:
+        from datetime import datetime, timedelta, timezone
+        due_date = datetime.now(timezone.utc) + timedelta(days=7)
+    
     db_request = Request(
-        **request_data.dict(exclude={"email_recipients"}),
+        **request_data.dict(exclude={"email_recipients", "email_connection_id", "due_date"}),
         user_id=current_user.id,
-        email_recipients=email_recipients_json
+        email_recipients=email_recipients_json,
+        email_connection_id=email_connection_id,
+        due_date=due_date
     )
     
     db.add(db_request)
@@ -92,7 +111,18 @@ def get_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(Request, Client.name.label("client_name"), Client.company.label("client_company")).join(Client)
+    from app.models.email_connection import EmailConnection
+    
+    query = db.query(
+        Request, 
+        Client.name.label("client_name"), 
+        Client.company.label("client_company"),
+        EmailConnection.email_address.label("email_connection_email")
+    ).join(
+        Client
+    ).outerjoin(
+        EmailConnection, Request.email_connection_id == EmailConnection.id
+    )
     query = query.filter(Request.user_id == current_user.id)
     
     if request_type:
@@ -111,7 +141,7 @@ def get_requests(
     
     # Transform results to include client info
     requests_with_client = []
-    for request, client_name, client_company in results:
+    for request, client_name, client_company, email_connection_email in results:
         request_dict = {
             "id": request.id,
             "title": request.title,
@@ -128,6 +158,13 @@ def get_requests(
             "updated_at": request.updated_at,
             "client_name": client_name,
             "client_company": client_company,
+            "email_connection_id": request.email_connection_id,
+            "email_connection_email": email_connection_email,
+            "draft_response": request.draft_response,
+            "draft_generated_at": request.draft_generated_at,
+            "confirmation_received": request.confirmation_received,
+            "confirmation_received_at": request.confirmation_received_at,
+            "confirmation_details": request.confirmation_details,
             "email_recipients": [],
             "attachments": []
         }
@@ -161,7 +198,18 @@ def get_request(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = db.query(Request, Client.name.label("client_name"), Client.company.label("client_company")).join(Client).filter(
+    from app.models.email_connection import EmailConnection
+    
+    result = db.query(
+        Request, 
+        Client.name.label("client_name"), 
+        Client.company.label("client_company"),
+        EmailConnection.email_address.label("email_connection_email")
+    ).join(
+        Client
+    ).outerjoin(
+        EmailConnection, Request.email_connection_id == EmailConnection.id
+    ).filter(
         Request.id == request_id,
         Request.user_id == current_user.id
     ).first()
@@ -172,7 +220,7 @@ def get_request(
             detail="Request not found"
         )
     
-    request, client_name, client_company = result
+    request, client_name, client_company, email_connection_email = result
     
     # Parse JSON fields
     request_dict = {
@@ -191,6 +239,13 @@ def get_request(
         "updated_at": request.updated_at,
         "client_name": client_name,
         "client_company": client_company,
+        "email_connection_id": request.email_connection_id,
+        "email_connection_email": email_connection_email,
+        "draft_response": request.draft_response,
+        "draft_generated_at": request.draft_generated_at,
+        "confirmation_received": request.confirmation_received,
+        "confirmation_received_at": request.confirmation_received_at,
+        "confirmation_details": request.confirmation_details,
         "email_recipients": [],
         "attachments": []
     }
@@ -331,3 +386,324 @@ def get_requests_by_client(
     requests = query.all()
     
     return requests
+
+@router.post("/{request_id}/regenerate-draft")
+def regenerate_draft_response(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Regenerate draft response for an incoming request"""
+    from app.services.ai_agent_service import AIAgentService
+    
+    agent_service = AIAgentService(db)
+    result = agent_service.regenerate_draft_response(request_id, current_user.id)
+    
+    if not result['success']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get('message', 'Failed to regenerate draft')
+        )
+    
+    return result
+
+@router.post("/{request_id}/send-draft")
+def send_draft_response(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send the draft response email"""
+    from app.models.email_connection import EmailConnection
+    from app.services.gmail_service import GmailService
+    from app.services.outlook_service import OutlookService
+    
+    # Get request
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    if not request.draft_response:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No draft response available"
+        )
+    
+    # Get email connection
+    if not request.email_connection_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email connection associated with this request"
+        )
+    
+    connection = db.query(EmailConnection).filter(
+        EmailConnection.id == request.email_connection_id
+    ).first()
+    
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email connection not found"
+        )
+    
+    # Get client for recipient
+    client = db.query(Client).filter(
+        Client.id == request.client_id
+    ).first()
+    
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found"
+        )
+    
+    try:
+        # Send email based on provider
+        if connection.provider.value == "gmail":
+            gmail_service = GmailService(db)
+            result = gmail_service.send_email(
+                connection=connection,
+                to_email=client.email,
+                subject=f"Re: {request.title}",
+                body=request.draft_response
+            )
+        elif connection.provider.value == "outlook":
+            outlook_service = OutlookService(db)
+            result = outlook_service.send_email(
+                connection=connection,
+                to_email=client.email,
+                subject=f"Re: {request.title}",
+                body=request.draft_response
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported provider: {connection.provider}"
+            )
+        
+        # Update request status
+        request.status = RequestStatus.COMPLETED
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Email sent successfully",
+            "provider": connection.provider.value,
+            "to": client.email
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send email: {str(e)}"
+        )
+
+
+@router.post("/{request_id}/configure-reminder")
+def configure_reminder(
+    request_id: int,
+    reminder_enabled: bool,
+    reminder_frequency: str,
+    reminder_message: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Configure automatic reminder for an outgoing request"""
+    from app.models.request import ReminderFrequency
+    
+    # Get request
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Only for outgoing requests
+    if request.type != RequestType.OUTGOING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reminders are only available for outgoing requests"
+        )
+    
+    # Validate frequency
+    try:
+        freq = ReminderFrequency(reminder_frequency)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid reminder frequency. Must be one of: {[f.value for f in ReminderFrequency]}"
+        )
+    
+    # Update request
+    request.reminder_enabled = reminder_enabled
+    request.reminder_frequency = freq
+    request.reminder_message = reminder_message
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"Reminder {'enabled' if reminder_enabled else 'disabled'}",
+        "reminder_frequency": reminder_frequency,
+        "has_custom_message": bool(reminder_message)
+    }
+
+
+@router.post("/{request_id}/send-reminder-now")
+def send_reminder_now(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Manually send a reminder for an outgoing request"""
+    from app.services.reminder_service import ReminderService
+    
+    # Get request
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Only for outgoing requests
+    if request.type != RequestType.OUTGOING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reminders are only available for outgoing requests"
+        )
+    
+    # Send reminder
+    reminder_service = ReminderService(db)
+    result = reminder_service.send_reminder(request)
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Failed to send reminder")
+        )
+    
+    return result
+
+
+@router.get("/{request_id}/follow-ups")
+def get_request_followups(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all follow-up requests for a given request"""
+    # Get parent request
+    parent_request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not parent_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Get follow-ups
+    follow_ups = db.query(Request).filter(
+        Request.parent_request_id == request_id,
+        Request.is_follow_up == True
+    ).order_by(Request.created_at.desc()).all()
+    
+    return {
+        "parent_request_id": request_id,
+        "follow_up_count": len(follow_ups),
+        "follow_ups": [
+            {
+                "id": req.id,
+                "title": req.title,
+                "follow_up_type": req.follow_up_type,
+                "created_at": req.created_at,
+                "status": req.status.value,
+                "priority": req.priority.value
+            } for req in follow_ups
+        ]
+    }
+
+
+@router.get("/{request_id}/conversation-thread")
+def get_conversation_thread(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get full conversation thread (parent + all follow-ups)"""
+    # Get request (could be parent or follow-up)
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Find root parent
+    root_request = request
+    if request.is_follow_up and request.parent_request_id:
+        root_request = db.query(Request).filter(Request.id == request.parent_request_id).first()
+        if not root_request:
+            root_request = request  # Fallback
+    
+    # Get all follow-ups
+    follow_ups = db.query(Request).filter(
+        Request.parent_request_id == root_request.id,
+        Request.is_follow_up == True
+    ).order_by(Request.created_at.asc()).all()
+    
+    # Build thread
+    thread = [
+        {
+            "id": root_request.id,
+            "title": root_request.title,
+            "description": root_request.description,
+            "draft_response": root_request.draft_response,
+            "created_at": root_request.created_at,
+            "status": root_request.status.value,
+            "is_root": True,
+            "follow_up_type": None
+        }
+    ]
+    
+    for follow_up in follow_ups:
+        thread.append({
+            "id": follow_up.id,
+            "title": follow_up.title,
+            "description": follow_up.description,
+            "draft_response": follow_up.draft_response,
+            "created_at": follow_up.created_at,
+            "status": follow_up.status.value,
+            "is_root": False,
+            "follow_up_type": follow_up.follow_up_type
+        })
+    
+    return {
+        "root_request_id": root_request.id,
+        "thread_length": len(thread),
+        "total_follow_ups": len(follow_ups),
+        "conversation": thread
+    }

@@ -7,7 +7,7 @@ from app.database.config import settings
 
 # Créer l'instance Celery
 celery_app = Celery(
-    "projectai",
+    "reqorai",
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=['app.tasks.webhook_renewal']  # Seulement webhook renewal, plus de polling
@@ -36,6 +36,13 @@ celery_app.conf.beat_schedule = {
     'renew-outlook-subscriptions-daily': {
         'task': 'app.tasks.webhook_renewal.renew_outlook_subscriptions',
         'schedule': crontab(minute=0, hour=3),  # Every day at 3:00 AM UTC
+        'options': {'queue': 'email_sync'}
+    },
+    
+    # ✅ Send reminders for outgoing requests
+    'send-reminders-every-6-hours': {
+        'task': 'app.tasks.webhook_renewal.send_pending_reminders',
+        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours (0:00, 6:00, 12:00, 18:00)
         'options': {'queue': 'email_sync'}
     },
 }

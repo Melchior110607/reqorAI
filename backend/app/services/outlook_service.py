@@ -295,6 +295,63 @@ class OutlookService:
             'received_at': received_at,  # Maintenant c'est un datetime Python
             'attachments': []  # TODO: Implémenter extraction des pièces jointes
         }
+    
+    def send_email(
+        self, 
+        connection: EmailConnection, 
+        to_email: str, 
+        subject: str, 
+        body: str
+    ) -> Dict[str, Any]:
+        """Send email via Microsoft Graph API"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {connection.access_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Create message payload
+            message_payload = {
+                "message": {
+                    "subject": subject,
+                    "body": {
+                        "contentType": "Text",
+                        "content": body
+                    },
+                    "toRecipients": [
+                        {
+                            "emailAddress": {
+                                "address": to_email
+                            }
+                        }
+                    ]
+                },
+                "saveToSentItems": "true"
+            }
+            
+            # Send message
+            response = requests.post(
+                'https://graph.microsoft.com/v1.0/me/sendMail',
+                headers=headers,
+                json=message_payload,
+                timeout=30
+            )
+            
+            if response.status_code == 202:
+                print(f"📧 Email sent via Outlook to {to_email}")
+                return {
+                    'success': True,
+                    'to': to_email
+                }
+            else:
+                error_msg = f"Failed to send email: HTTP {response.status_code} - {response.text}"
+                print(f"❌ {error_msg}")
+                raise Exception(error_msg)
+            
+        except Exception as e:
+            error_msg = f"Failed to send email: {str(e)}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
 
     def setup_webhook(self, connection: EmailConnection) -> bool:
         """Configure un webhook pour recevoir les emails en temps réel"""

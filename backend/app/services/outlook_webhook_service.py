@@ -265,55 +265,75 @@ class OutlookWebhookService:
             
             if not subscription:
                 print(f"⚠️ No subscription found for connection {connection.id}")
-                return {"status": "ignored", "reason": "no_subscription"}
+                print(f"ℹ️ This is likely an orphaned Microsoft subscription sending notifications")
+                print(f"ℹ️ We'll process the email anyway but won't create a new subscription")
+                # Note: We don't auto-create subscriptions here because:
+                # 1. Microsoft is already sending notifications (subscription exists on their side)
+                # 2. Creating a new subscription would result in duplicate notifications
+                # 3. The existing Microsoft subscription will eventually expire
+                # For now, we'll just process the email without subscription metadata
             
-            # Use Outlook Delta API to fetch ONLY new emails since last deltaLink
+            # For webhook notifications, fetch ONLY the specific email mentioned in the resource
+            # instead of using Delta API which fetches ALL changes
             emails = []
             new_delta_link = None
             
-            if subscription.resource and subscription.resource.startswith('delta:'):
-                # Utiliser deltaLink pour récupérer seulement les changements
-                delta_link = subscription.resource.replace('delta:', '')
-                
-                # get_emails_from_delta devrait retourner (emails, new_delta_link)
-                # Pour l'instant on l'appelle et on récupère juste les emails
+            if resource and resource.startswith('Users/'):
+                # Extract message ID from resource path
+                # Resource format: "Users/{userId}/Messages/{messageId}"
                 try:
-                    # Faire l'appel Delta manuellement pour récupérer le nouveau deltaLink
+                    print(f"🎯 Fetching specific email from webhook resource: {resource}")
+                    
+                    # Fetch the specific email directly
                     headers = {'Authorization': f'Bearer {connection.access_token}'}
-                    response = requests.get(delta_link, headers=headers, timeout=30)
+                    message_url = f"https://graph.microsoft.com/v1.0/{resource}"
+                    
+                    response = requests.get(message_url, headers=headers, timeout=30)
                     
                     if response.status_code == 200:
-                        delta_data = response.json()
+                        message_data = response.json()
+                        email_data = self.outlook_service._parse_outlook_message(message_data)
+                        emails = [email_data]
+                        print(f"✅ Successfully fetched specific email: {email_data.get('subject', 'No subject')}")
                         
-                        # Récupérer les nouveaux emails
-                        for msg in delta_data.get('value', []):
-                            if '@removed' not in msg:  # Ignorer les emails supprimés
-                                email_data = self.outlook_service._parse_outlook_message(msg)
-                                emails.append(email_data)
+                        # Keep the existing deltaLink unchanged since we're not using Delta API
+                        if subscription and subscription.resource and subscription.resource.startswith('delta:'):
+                            new_delta_link = subscription.resource.replace('delta:', '')
                         
-                        # Récupérer le nouveau deltaLink pour la prochaine fois
-                        new_delta_link = delta_data.get('@odata.deltaLink')
-                        
-                        if new_delta_link:
-                            print(f"🔄 Updated delta link for next sync")
-                        else:
-                            print(f"⚠️ No new delta link in response")
-                    
+                    elif response.status_code == 404:
+                        print(f"⚠️ Email not found (may have been deleted): {resource}")
+                        emails = []
                     else:
-                        print(f"⚠️ Delta API error: {response.status_code}, falling back")
-                        emails = self.outlook_service.get_recent_emails(connection, max_results=10)
-                
-                except Exception as delta_error:
-                    print(f"⚠️ Delta fetch error: {str(delta_error)}, falling back")
-                    emails = self.outlook_service.get_recent_emails(connection, max_results=10)
+                        print(f"⚠️ Error fetching specific email: {response.status_code}, falling back to recent emails")
+                        emails = self.outlook_service.get_recent_emails(connection, max_results=1)
+                        
+                except Exception as e:
+                    print(f"⚠️ Error fetching specific email: {str(e)}, falling back")
+                    emails = self.outlook_service.get_recent_emails(connection, max_results=1)
+            
             else:
-                # Premier webhook, récupérer emails récents
-                print(f"📥 No delta link yet, fetching recent emails")
-                emails = self.outlook_service.get_recent_emails(
-                    connection=connection,
-                    max_results=10,
-                    since_timestamp=connection.last_sync
-                )
+                # Fallback: use Delta API or recent emails for non-standard notifications
+                print(f"📥 Non-standard resource format, using fallback method")
+                if subscription and subscription.resource and subscription.resource.startswith('delta:'):
+                    # Use Delta API as before (for sync operations, not webhooks)
+                    delta_link = subscription.resource.replace('delta:', '')
+                    try:
+                        headers = {'Authorization': f'Bearer {connection.access_token}'}
+                        response = requests.get(delta_link, headers=headers, timeout=30)
+                        
+                        if response.status_code == 200:
+                            delta_data = response.json()
+                            for msg in delta_data.get('value', []):
+                                if '@removed' not in msg:
+                                    email_data = self.outlook_service._parse_outlook_message(msg)
+                                    emails.append(email_data)
+                            new_delta_link = delta_data.get('@odata.deltaLink', delta_link)
+                        else:
+                            emails = self.outlook_service.get_recent_emails(connection, max_results=1)
+                    except Exception as e:
+                        emails = self.outlook_service.get_recent_emails(connection, max_results=1)
+                else:
+                    emails = self.outlook_service.get_recent_emails(connection, max_results=1)
             
             # Process and save the emails to database
             from app.services.email_service import EmailProcessingService
@@ -333,16 +353,22 @@ class OutlookWebhookService:
                 else:
                     duplicates += 1
             
-            # Update subscription metadata
-            subscription.last_notification_at = datetime.now(timezone.utc)
-            subscription.notification_count += 1
-            
-            # Sauvegarder le nouveau deltaLink s'il existe
-            if new_delta_link:
-                subscription.resource = f"delta:{new_delta_link}"
-                print(f"💾 Saved new delta link for future syncs")
-            
-            self.db.commit()
+            # Update subscription metadata (only if subscription exists)
+            if subscription:
+                subscription.last_notification_at = datetime.now(timezone.utc)
+                subscription.notification_count += 1
+                
+                # Sauvegarder le nouveau deltaLink seulement si nous avons utilisé l'API Delta
+                # Pour les webhooks spécifiques, on garde le deltaLink existant
+                if new_delta_link and not (resource and resource.startswith('Users/')):
+                    subscription.resource = f"delta:{new_delta_link}"
+                    print(f"💾 Saved new delta link for future syncs")
+                elif resource and resource.startswith('Users/'):
+                    print(f"🎯 Keeping existing delta link (processed specific webhook email)")
+                
+                self.db.commit()
+            else:
+                print(f"ℹ️ No subscription to update (orphaned webhook)")
             
             print(f"✅ Notification processed: {synced} emails saved, {duplicates} duplicates")
             

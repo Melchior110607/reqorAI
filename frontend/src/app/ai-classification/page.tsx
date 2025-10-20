@@ -4,23 +4,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Brain, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Zap, AlertCircle } from 'lucide-react';
 import { emailAPI } from '@/services/emailAPI';
+import { InterceptedEmail } from '@/types/email';
 import Link from 'next/link';
-
-interface InterceptedEmail {
-  id: number;
-  sender_email: string;
-  sender_name: string;
-  subject: string;
-  email_received_at: string;
-  processing_status: string;
-  ai_classification?: string;
-  ai_confidence?: number;
-  ai_reasoning?: string;
-  related_request_ids?: number[] | string;
-  client_id?: number;
-  client_name?: string;
-  client_company?: string;
-}
 
 export default function AIClassificationPage() {
   const [emails, setEmails] = useState<InterceptedEmail[]>([]);
@@ -108,10 +93,11 @@ export default function AIClassificationPage() {
     }
   };
 
-  const parseRelatedRequests = (jsonString?: string): number[] => {
-    if (!jsonString) return [];
+  const parseRelatedRequests = (data?: number[] | string): number[] => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
     try {
-      return JSON.parse(jsonString);
+      return JSON.parse(data);
     } catch {
       return [];
     }

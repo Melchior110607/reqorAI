@@ -62,8 +62,9 @@ class InterceptedEmailResponse(InterceptedEmailBase):
     client_id: Optional[int] = None
     confidence_score: float
     ai_classification: EmailClassification
-    ai_confidence: float
+    ai_confidence: Optional[float] = None  # Now optional (deprecated)
     ai_reasoning: Optional[str] = None
+    ai_sub_classifications: Optional[str] = None  # JSON for MIXED
     related_request_ids: Optional[List[int]] = None
     processing_status: ProcessingStatus
     processed_at: Optional[datetime] = None
@@ -84,9 +85,10 @@ class EmailClassificationRequest(BaseModel):
 class EmailClassificationResponse(BaseModel):
     email_id: int
     classification: EmailClassification
-    confidence: float
-    reasoning: str
+    confidence: Optional[float] = None  # Deprecated
+    reasoning: Optional[str] = None  # Deprecated
     related_requests: List[int]
+    sub_classifications: Optional[List[dict]] = None  # For MIXED
 
 # OAuth Callback Schemas
 class OAuthCallbackRequest(BaseModel):

@@ -70,6 +70,27 @@ export interface Request {
   user_id: number;
   created_at: string;
   updated_at: string;
+  
+  // AI Agent fields
+  draft_response?: string;
+  draft_generated_at?: string;
+  email_connection_id?: number;
+  email_connection_email?: string;
+  confirmation_received?: boolean;
+  confirmation_received_at?: string;
+  confirmation_details?: string;
+  
+  // Reminder fields
+  reminder_enabled?: boolean;
+  reminder_message?: string;
+  last_reminder_sent_at?: string;
+  reminder_count?: number;
+  
+  // Follow-up fields
+  is_follow_up?: boolean;
+  parent_request_id?: number;
+  follow_up_type?: 'client_reminder' | 'dissatisfaction';
+  follow_up_count?: number;
 }
 
 export interface RequestWithClient extends Request {

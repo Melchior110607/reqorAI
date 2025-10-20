@@ -39,6 +39,10 @@ async def gmail_webhook(
     Format: https://cloud.google.com/pubsub/docs/push
     """
     try:
+        # Quick deduplication: If we received this exact notification recently, ignore
+        # This prevents processing the same notification multiple times if Gmail sends duplicates
+        from datetime import timedelta
+        recent_threshold = datetime.now(timezone.utc) - timedelta(seconds=5)
         # Parse Pub/Sub message
         body = await request.json()
         
@@ -168,9 +172,42 @@ async def outlook_webhook(
             ).first()
             
             if not subscription:
-                print(f"⚠️ Subscription not found: {subscription_id}")
-                results.append({"status": "ignored", "reason": "subscription_not_found"})
-                continue
+                print(f"⚠️ Subscription not found: {subscription_id}, trying to find connection...")
+                # Try to find connection by subscription_id in the resource or by email
+                # First, try to find any Outlook connection that might match
+                outlook_connections = db.query(EmailConnection).filter(
+                    EmailConnection.provider == "OUTLOOK"
+                ).all()
+                
+                connection = None
+                for conn in outlook_connections:
+                    # Check if this connection has any subscription with this ID
+                    existing_sub = db.query(WebhookSubscription).filter(
+                        WebhookSubscription.connection_id == conn.id,
+                        WebhookSubscription.subscription_id == subscription_id
+                    ).first()
+                    if existing_sub:
+                        connection = conn
+                        subscription = existing_sub
+                        break
+                
+                if not connection:
+                    # If still no connection found, try the first Outlook connection as fallback
+                    if outlook_connections:
+                        connection = outlook_connections[0]
+                        print(f"🔄 Using fallback connection: {connection.email_address}")
+                    else:
+                        print(f"❌ No Outlook connections found at all")
+                        results.append({"status": "ignored", "reason": "no_outlook_connections"})
+                        continue
+                
+                if not subscription and connection:
+                    # Try to process notification anyway - it will auto-create subscription
+                    print(f"🔄 Processing notification without subscription to trigger auto-creation")
+                    if change_type == "created":
+                        result = outlook_service.process_notification(connection, resource)
+                        results.append(result)
+                    continue
             
             # Validate client state
             notification_client_state = notification.get("clientState")

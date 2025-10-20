@@ -346,3 +346,57 @@ class GmailService:
             'received_at': received_at,  # Maintenant c'est un datetime Python
             'attachments': []  # TODO: Implémenter extraction des pièces jointes
         }
+    
+    def send_email(
+        self, 
+        connection: EmailConnection, 
+        to_email: str, 
+        subject: str, 
+        body: str
+    ) -> Dict[str, Any]:
+        """Send email via Gmail API"""
+        try:
+            credentials = Credentials(
+                token=connection.access_token,
+                refresh_token=connection.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.gmail_client_id,
+                client_secret=settings.gmail_client_secret
+            )
+            
+            # Refresh token if expired
+            if credentials.expired and credentials.refresh_token:
+                credentials.refresh(GoogleRequest())
+                connection.access_token = credentials.token
+                connection.expires_at = credentials.expiry
+                self.db.commit()
+            
+            service = build('gmail', 'v1', credentials=credentials)
+            
+            # Create message
+            from email.mime.text import MIMEText
+            message = MIMEText(body)
+            message['to'] = to_email
+            message['subject'] = subject
+            
+            # Encode message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            
+            # Send message
+            send_result = service.users().messages().send(
+                userId='me',
+                body={'raw': raw_message}
+            ).execute()
+            
+            print(f"📧 Email sent via Gmail to {to_email}: {send_result.get('id')}")
+            
+            return {
+                'success': True,
+                'message_id': send_result.get('id'),
+                'to': to_email
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to send email: {str(e)}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)

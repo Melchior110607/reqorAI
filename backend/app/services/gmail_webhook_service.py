@@ -186,12 +186,46 @@ class GmailWebhookService:
                 WebhookSubscription.provider == "GMAIL"
             ).first()
             
+            # Track if we just created a new subscription
+            just_created_subscription = False
+            
             if not subscription:
-                print(f"⚠️ No subscription found for connection {connection.id}")
-                return {"synced": 0, "duplicates": 0}
+                print(f"⚠️ No subscription found for connection {connection.id}, creating one...")
+                try:
+                    # Auto-create missing subscription
+                    setup_result = self.setup_watch(connection)
+                    if setup_result.get("success"):
+                        print(f"✅ Auto-created Gmail watch for {connection.email_address}")
+                        just_created_subscription = True
+                        # Retrieve the newly created subscription
+                        subscription = self.db.query(WebhookSubscription).filter(
+                            WebhookSubscription.connection_id == connection.id,
+                            WebhookSubscription.provider == "GMAIL"
+                        ).first()
+                        
+                        # IMPORTANT: Update the subscription's history_id to current notification's history_id
+                        # to avoid processing old emails from backlog
+                        if subscription and history_id:
+                            subscription.history_id = history_id
+                            self.db.commit()
+                            print(f"📍 Set initial history_id to {history_id} to skip backlog")
+                    else:
+                        print(f"❌ Failed to auto-create Gmail watch: {setup_result.get('error')}")
+                        return {"synced": 0, "duplicates": 0, "error": "Failed to create subscription"}
+                except Exception as e:
+                    print(f"❌ Error auto-creating Gmail watch: {str(e)}")
+                    return {"synced": 0, "duplicates": 0, "error": f"Auto-creation failed: {str(e)}"}
+                
+                if not subscription:
+                    print(f"❌ Still no subscription after auto-creation attempt")
+                    return {"synced": 0, "duplicates": 0, "error": "Subscription creation failed"}
             
             # Use History API to fetch ONLY new emails since last history_id
-            if history_id and subscription.history_id:
+            # BUT: If we just created the subscription, don't fetch history to avoid processing old emails
+            if just_created_subscription:
+                print(f"ℹ️ Subscription just created, skipping history fetch to avoid processing old emails")
+                emails = []
+            elif history_id and subscription.history_id:
                 print(f"🔍 Fetching changes since history ID {subscription.history_id}")
                 emails = self.gmail_service.get_emails_from_history(
                     connection=connection,
@@ -228,8 +262,15 @@ class GmailWebhookService:
             subscription.last_notification_at = datetime.now(timezone.utc)
             subscription.notification_count += 1
             
+            # Update history_id ONLY if it's newer than current
+            # Gmail notifications can arrive out of order, so we need to track the highest history_id
             if history_id:
-                subscription.history_id = history_id
+                if subscription.history_id is None or history_id > subscription.history_id:
+                    old_history_id = subscription.history_id
+                    subscription.history_id = history_id
+                    print(f"📍 Updated history_id from {old_history_id} to {history_id}")
+                else:
+                    print(f"⏭️ Skipping history_id update ({history_id} <= {subscription.history_id})")
             
             self.db.commit()
             

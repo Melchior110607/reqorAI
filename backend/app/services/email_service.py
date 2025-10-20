@@ -77,16 +77,33 @@ class EmailMatchingService:
         company_name = client.company.lower()
         client_email = client.email.lower()
         
-        # Correspondance exacte d'email
+        # Liste des domaines publics à exclure du matching par entreprise
+        PUBLIC_DOMAINS = {
+            'gmail.com', 'googlemail.com',
+            'hotmail.com', 'outlook.com', 'live.com', 'msn.com',
+            'yahoo.com', 'yahoo.fr', 'yahoo.co.uk',
+            'aol.com', 'protonmail.com', 'icloud.com',
+            'mail.com', 'gmx.com', 'yandex.com',
+            'zoho.com', 'tutanota.com'
+        }
+        
+        # 1️⃣ PRIORITÉ ABSOLUE : Correspondance exacte d'email
         if sender_email == client_email:
             return 1.0
         
-        # Correspondance de domaine
+        # 2️⃣ Correspondance de domaine UNIQUEMENT si ce n'est PAS un domaine public
         client_domain = client_email.split('@')[-1] if '@' in client_email else ''
-        if domain == client_domain:
+        
+        # Si le domaine du sender est public, on NE matche PAS sur le domaine (sauf exact email)
+        if domain in PUBLIC_DOMAINS:
+            # Pour les domaines publics, seul l'email exact peut matcher
+            return 0.0
+        
+        # Si le domaine n'est pas public, on peut matcher sur le domaine
+        if domain == client_domain and domain not in PUBLIC_DOMAINS:
             return 0.9
         
-        # Correspondance fuzzy du nom d'entreprise dans l'email
+        # 3️⃣ Correspondance fuzzy du nom d'entreprise dans l'email (uniquement domaines non-publics)
         company_words = company_name.split()
         max_similarity = 0.0
         
