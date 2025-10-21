@@ -16,8 +16,7 @@ import {
   AlertCircle, 
   XCircle,
   TrendingUp,
-  Filter,
-  Sparkles
+  Filter
 } from 'lucide-react';
 
 export default function IncomingRequestsPage() {
@@ -214,12 +213,6 @@ export default function IncomingRequestsPage() {
                             {request.is_priority && (
                               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
                                 Priority
-                              </span>
-                            )}
-                            {request.draft_response && (
-                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                                <Sparkles className="w-3 h-3 mr-1" />
-                                AI Draft Available
                               </span>
                             )}
                             {request.follow_up_type === 'client_reminder' && (

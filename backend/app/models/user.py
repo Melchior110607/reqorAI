@@ -19,6 +19,7 @@ class User(Base):
     first_name = Column(String)
     last_name = Column(String)
     phone = Column(String)
+    email_signature = Column(Text, nullable=True)  # Email signature for AI-generated emails
     
     # OAuth fields
     auth_provider = Column(Enum(AuthProvider), default=AuthProvider.LOCAL, nullable=False)

@@ -281,19 +281,27 @@ class RAGService:
         context_parts.append("=== RELEVANT KNOWLEDGE BASE DOCUMENTS ===\n")
         
         current_tokens = 0
+        chunks_added = 0
         for i, chunk_text in enumerate(relevant_chunks):
+            if not chunk_text or not chunk_text.strip():
+                print(f"⚠️ Empty chunk {i+1}, skipping")
+                continue
+                
             chunk_tokens = self.estimate_tokens(chunk_text)
+            print(f"📄 Chunk {i+1}: {chunk_tokens} tokens, {len(chunk_text)} chars")
             
             # Stop if we exceed max_tokens
             if current_tokens + chunk_tokens > max_tokens:
+                print(f"⚠️ Token limit reached ({current_tokens + chunk_tokens} > {max_tokens}), stopping")
                 break
             
             context_parts.append(f"\n--- Document Excerpt {i+1} ---")
             context_parts.append(chunk_text)
             current_tokens += chunk_tokens
+            chunks_added += 1
         
         context = "\n".join(context_parts)
-        print(f"📚 Prepared RAG context: {current_tokens} tokens from {len(relevant_chunks)} chunks")
+        print(f"📚 Prepared RAG context: {current_tokens} tokens from {chunks_added}/{len(relevant_chunks)} chunks")
         
         return context
 

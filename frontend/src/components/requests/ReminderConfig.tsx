@@ -119,27 +119,25 @@ export default function ReminderConfig({ requestId, initialConfig, onUpdate }: R
           <>
             {/* Frequency */}
             <div>
-              
-              <label className="block text-sm font-medium text-gray-900 mb-2">
+              <label className="block text-sm font-medium text-black mb-2">
                 Frequency
               </label>
               
               <select
-              
                 value={frequency}
                 onChange={(e) => setFrequency(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="daily">Daily</option>
-                <option value="weekly"> Weekly </option>
+                <option value="weekly">Weekly</option>
                 <option value="biweekly">Biweekly</option>
-                <option value="monthly"> Monthly </option>
+                <option value="monthly">Monthly</option>
               </select>
             </div>
 
             {/* Custom Message */}
             <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
+              <label className="block text-sm font-medium text-black mb-2">
                 Custom Message (optional)
               </label>
               
@@ -148,7 +146,7 @@ export default function ReminderConfig({ requestId, initialConfig, onUpdate }: R
                 onChange={(e) => setCustomMessage(e.target.value)}
                 rows={3}
                 placeholder="Leave empty for AI-generated message..."
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
 
@@ -183,7 +181,7 @@ export default function ReminderConfig({ requestId, initialConfig, onUpdate }: R
         )}
 
         {!enabled && (
-          <p className="text-sm text-gray-900">
+          <p className="text-sm text-black">
             Enable to automatically send follow-up emails
           </p>
         )}

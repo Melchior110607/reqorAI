@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/Select';
 import { requestsAPI } from '@/services/api';
 import { RequestWithClient, RequestStatus, RequestType, RequestPriority } from '@/types';
 import ReminderConfig from '../../../components/requests/ReminderConfig';
+import TextType from '@/components/ui/TextType';
 import { 
   ArrowLeft, 
   Clock, 
@@ -20,7 +21,11 @@ import {
   Save,
   X,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  MessageSquare,
+  CheckCircle2,
+  Bell,
+  AlertTriangle
 } from 'lucide-react';
 
 export default function RequestDetailPage() {
@@ -43,6 +48,21 @@ export default function RequestDetailPage() {
   const [draftResponse, setDraftResponse] = useState('');
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
+  const [showTypingEffect, setShowTypingEffect] = useState(false);
+  
+  // For follow-up modal
+  const [followUpModalOpen, setFollowUpModalOpen] = useState(false);
+  const [followUpModalContent, setFollowUpModalContent] = useState<{
+    type: 'client_reminder' | 'dissatisfaction' | null;
+    message: string;
+    date: string;
+    count: number;
+  }>({
+    type: null,
+    message: '',
+    date: '',
+    count: 0
+  });
 
   // For follow-ups and conversation thread
   const [followUps, setFollowUps] = useState<any[]>([]);
@@ -103,6 +123,18 @@ export default function RequestDetailPage() {
     }
   };
 
+  const openFollowUpModal = (type: 'client_reminder' | 'dissatisfaction') => {
+    if (!request) return;
+    
+    setFollowUpModalContent({
+      type,
+      message: request.latest_follow_up_message || 'No message available',
+      date: request.latest_follow_up_at || '',
+      count: request.follow_up_count || 0
+    });
+    setFollowUpModalOpen(true);
+  };
+
   const handleStatusUpdate = async () => {
     if (!request) return;
     
@@ -135,6 +167,7 @@ export default function RequestDetailPage() {
     if (!request) return;
     
     setRegenerating(true);
+    setShowTypingEffect(true);
     try {
       const result = await requestsAPI.regenerateDraft(request.id);
       setDraftResponse(result.draft_response);
@@ -143,12 +176,14 @@ export default function RequestDetailPage() {
         draft_response: result.draft_response,
         draft_generated_at: result.draft_generated_at
       } : null);
-      alert('✅ Draft response regenerated!');
+      // alert('✅ Draft response regenerated!');  // Removed to not interrupt typing effect
     } catch (error: any) {
       console.error('Error regenerating draft:', error);
       alert('Failed to regenerate draft: ' + (error.response?.data?.detail || error.message));
+      setShowTypingEffect(false);
     } finally {
       setRegenerating(false);
+      // Don't set showTypingEffect to false here - let it finish naturally
     }
   };
 
@@ -205,34 +240,34 @@ export default function RequestDetailPage() {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
+        </div>
     );
   }
 
   if (!request) {
     return (
-      <div className="text-center py-12">
+        <div className="text-center py-12">
         <h2 className="text-xl font-semibold text-gray-900">Request not found</h2>
-        <Button onClick={() => router.back()} className="mt-4">
-          Go Back
-        </Button>
-      </div>
+          <Button onClick={() => router.back()} className="mt-4">
+            Go Back
+          </Button>
+        </div>
     );
   }
 
   return (
-    <div className="px-4 py-6 sm:px-0">
-      {/* Header */}
+      <div className="px-4 py-6 sm:px-0">
+        {/* Header */}
       <div className="mb-6">
-        <Button
-          variant="ghost"
-          onClick={() => router.back()}
-          className="mb-4"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back
-        </Button>
-        
+          <Button
+            variant="ghost"
+            onClick={() => router.back()}
+            className="mb-4"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+          </Button>
+          
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center space-x-3 mb-2 flex-wrap">
@@ -302,8 +337,8 @@ export default function RequestDetailPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <Textarea
-                    value={editData.description}
+                    <Textarea
+                      value={editData.description}
                     onChange={(e) => setEditData({ ...editData, description: e.target.value })}
                     rows={6}
                   />
@@ -320,11 +355,11 @@ export default function RequestDetailPage() {
                 </div>
               </div>
             ) : (
-              <div>
+                  <div>
                 <p className="text-gray-700 whitespace-pre-wrap">{request.description}</p>
-              </div>
-            )}
-          </div>
+                      </div>
+                    )}
+                  </div>
 
           {/* Confirmation Section (for OUTGOING requests) */}
           {request.type === RequestType.OUTGOING && request.confirmation_received && (
@@ -332,16 +367,16 @@ export default function RequestDetailPage() {
               <div className="flex items-center mb-4">
                 <CheckCircle className="w-6 h-6 text-green-600 mr-2" />
                 <h2 className="text-lg font-medium text-green-900">Confirmation Received</h2>
-              </div>
-              
+                </div>
+
               <div className="space-y-3">
-                <div>
+                  <div>
                   <span className="text-sm font-medium text-green-800">Confirmed at:</span>
                   <span className="ml-2 text-sm text-green-700">
                     {new Date(request.confirmation_received_at).toLocaleString()}
                   </span>
                 </div>
-                
+
                 {request.confirmation_details && (
                   <div>
                     <span className="text-sm font-medium text-green-800 block mb-2">Client Message:</span>
@@ -355,18 +390,18 @@ export default function RequestDetailPage() {
           )}
 
           {/* AI Draft Response Section (for INCOMING requests) */}
-          {request.type === RequestType.INCOMING && (
-            <div className="bg-white shadow rounded-lg p-6">
+            {request.type === RequestType.INCOMING && (
+              <div className="bg-white shadow rounded-lg p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center">
                   <Sparkles className="w-5 h-5 text-purple-600 mr-2" />
                   <h2 className="text-lg font-medium text-gray-900">AI-Generated Draft Response</h2>
                 </div>
-                
+
                 <div className="flex items-center space-x-2">
-                  <Button
+                          <Button
                     variant="outline"
-                    size="sm"
+                            size="sm"
                     onClick={handleRegenerateDraft}
                     disabled={regenerating}
                   >
@@ -377,18 +412,41 @@ export default function RequestDetailPage() {
               </div>
 
               {request.draft_response ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                       Response (editable before sending)
-                    </label>
-                    <Textarea
-                      value={draftResponse}
-                      onChange={(e) => setDraftResponse(e.target.value)}
-                      rows={10}
-                      className="font-mono text-sm"
-                    />
-                  </div>
+                      </label>
+                      {showTypingEffect && regenerating === false ? (
+                        <div className="border border-gray-300 rounded-md p-3 bg-white min-h-[240px]">
+                          <TextType
+                            text={draftResponse}
+                            typingSpeed={10}
+                            showCursor={true}
+                            cursorCharacter="|"
+                            loop={false}
+                            onSentenceComplete={() => {
+                              // Wait a bit then hide typing effect to show editable textarea
+                              setTimeout(() => {
+                                setShowTypingEffect(false);
+                              }, 1000);
+                            }}
+                            className="text-sm whitespace-pre-wrap text-black"
+                          />
+                        </div>
+                      ) : showTypingEffect ? (
+                        <div className="border border-gray-300 rounded-md p-3 bg-white min-h-[240px] flex items-center justify-center">
+                          <div className="animate-pulse text-gray-500">Finalizing...</div>
+                        </div>
+                      ) : (
+                        <Textarea
+                          value={draftResponse}
+                          onChange={(e) => setDraftResponse(e.target.value)}
+                          rows={10}
+                          className="font-mono text-sm"
+                        />
+                      )}
+                    </div>
 
                   {request.draft_generated_at && (
                     <p className="text-xs text-gray-500">
@@ -405,15 +463,15 @@ export default function RequestDetailPage() {
                     </div>
                   )}
 
-                  <div className="flex justify-end">
+                    <div className="flex justify-end">
                     <Button
                       onClick={handleSendDraft}
                       disabled={sending || !draftResponse}
                       className="bg-green-600 hover:bg-green-700"
                     >
-                      <Send className="w-4 h-4 mr-2" />
+                        <Send className="w-4 h-4 mr-2" />
                       {sending ? 'Sending...' : 'Send Response to Client'}
-                    </Button>
+                      </Button>
                   </div>
                 </div>
               ) : (
@@ -431,7 +489,7 @@ export default function RequestDetailPage() {
         <div className="lg:col-span-1 space-y-6">
           
           {/* Request Information */}
-          <div className="bg-white shadow rounded-lg p-6">
+                <div className="bg-white shadow rounded-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-medium text-gray-900">Request Information</h3>
               {!isEditing && (
@@ -497,6 +555,139 @@ export default function RequestDetailPage() {
             </div>
           </div>
 
+          {/* Client Responses (for INCOMING requests) */}
+          {request.type === RequestType.INCOMING && (
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <MessageSquare className="w-5 h-5 mr-2 text-gray-600" />
+                Client Responses
+              </h3>
+
+              {/* Confirmation Status */}
+              <div className="space-y-3">
+                {/* Confirmation takes priority - shows in green */}
+                {request.confirmation_received ? (
+                  <div 
+                    onClick={() => {
+                      if (request.confirmation_details) {
+                        setFollowUpModalContent({
+                          type: null,
+                          message: request.confirmation_details,
+                          date: request.confirmation_received_at || '',
+                          count: 1
+                        });
+                        setFollowUpModalOpen(true);
+                      }
+                    }}
+                    className="flex items-start space-x-3 p-4 bg-green-50 border-2 border-green-300 rounded-lg cursor-pointer hover:bg-green-100 transition-colors shadow-sm"
+                  >
+                    <CheckCircle2 className="w-6 h-6 text-green-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-base font-semibold text-green-900">✓ Client Confirmed</p>
+                        {request.confirmation_received_at && (
+                          <span className="text-xs text-green-700 font-medium">
+                            {new Date(request.confirmation_received_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-green-700 mt-1">
+                        Client is satisfied with the response
+                      </p>
+                      {request.confirmation_details && (
+                        <div className="mt-2 p-2 bg-white border border-green-200 rounded text-xs text-gray-800">
+                          {request.confirmation_details.length > 150 
+                            ? request.confirmation_details.substring(0, 150) + '...' 
+                            : request.confirmation_details}
+                        </div>
+                      )}
+                      {request.confirmation_details && (
+                        <p className="text-xs text-green-600 mt-2 font-semibold">Click to view full message →</p>
+                      )}
+                    </div>
+                    </div>
+                  ) : (
+                  <>
+                    {/* Show reminders/dissatisfaction only if NO confirmation */}
+                    
+                    {/* Client Reminders */}
+                    {request.follow_up_type === 'client_reminder' && request.follow_up_count > 0 && (
+                  <div 
+                    onClick={() => openFollowUpModal('client_reminder')}
+                    className="flex items-start space-x-3 p-3 bg-orange-50 border border-orange-200 rounded cursor-pointer hover:bg-orange-100 transition-colors"
+                  >
+                    <Bell className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-orange-900">Client Sent Reminders</p>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">
+                          {request.follow_up_count}x
+                        </span>
+                      </div>
+                      {request.latest_follow_up_at && (
+                        <p className="text-xs text-orange-600 mt-1">
+                          Latest: {new Date(request.latest_follow_up_at).toLocaleDateString()}
+                        </p>
+                      )}
+                      {request.latest_follow_up_message && (
+                        <div className="mt-2 p-2 bg-white border border-orange-200 rounded text-xs text-gray-800">
+                          {request.latest_follow_up_message.length > 200 
+                            ? request.latest_follow_up_message.substring(0, 200) + '...' 
+                            : request.latest_follow_up_message}
+                        </div>
+                      )}
+                      <p className="text-xs text-orange-500 mt-2 font-medium">Click to view full message →</p>
+                          </div>
+                            </div>
+                          )}
+
+                {/* Dissatisfaction */}
+                {request.follow_up_type === 'dissatisfaction' && request.follow_up_count > 0 && (
+                  <div 
+                    onClick={() => openFollowUpModal('dissatisfaction')}
+                    className="flex items-start space-x-3 p-3 bg-red-50 border border-red-200 rounded cursor-pointer hover:bg-red-100 transition-colors"
+                  >
+                    <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-red-900">Needs More Information</p>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                          {request.follow_up_count}x
+                        </span>
+                      </div>
+                      {request.latest_follow_up_at && (
+                        <p className="text-xs text-red-600 mt-1">
+                          Latest: {new Date(request.latest_follow_up_at).toLocaleDateString()}
+                        </p>
+                      )}
+                      {request.latest_follow_up_message && (
+                        <div className="mt-2 p-2 bg-white border border-red-200 rounded text-xs text-gray-800">
+                          {request.latest_follow_up_message.length > 200 
+                            ? request.latest_follow_up_message.substring(0, 200) + '...' 
+                            : request.latest_follow_up_message}
+                        </div>
+                      )}
+                      <p className="text-xs text-red-500 mt-2 font-medium">Click to view full message →</p>
+                    </div>
+                    </div>
+                  )}
+
+                    {/* No activity yet */}
+                    {request.follow_up_type !== 'client_reminder' && 
+                     request.follow_up_type !== 'dissatisfaction' && (
+                      <div className="flex items-start space-x-3 p-3 bg-gray-50 border border-gray-200 rounded">
+                        <Clock className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600">Awaiting client response</p>
+                        </div>
+                </div>
+                    )}
+              </>
+            )}
+          </div>
+            </div>
+          )}
+
           {/* Auto-Reminder System (for OUTGOING requests) */}
           {request.type === RequestType.OUTGOING && (
             <ReminderConfig
@@ -512,68 +703,118 @@ export default function RequestDetailPage() {
             />
           )}
 
-          {/* Follow-Up Requests (Incoming Requests) */}
-          {request.type === RequestType.INCOMING && followUps.length > 0 && (
-            <div className="mt-6 bg-white shadow rounded-lg p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                <span className="mr-2">📋</span>
-                Follow-Up Requests ({followUps.length})
-              </h3>
-              <div className="space-y-3">
-                {followUps.map((followUp) => (
-                  <div 
-                    key={followUp.id}
-                    className="border-l-4 border-blue-500 pl-4 py-2 hover:bg-gray-50 cursor-pointer"
-                    onClick={() => router.push(`/request/${followUp.id}`)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <h4 className="text-sm font-medium text-gray-900">{followUp.title}</h4>
-                          {followUp.follow_up_type === 'client_reminder' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
-                              🔔 Reminder
-                            </span>
-                          )}
-                          {followUp.follow_up_type === 'dissatisfaction' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                              ⚠️ Dissatisfied
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Created: {new Date(followUp.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        followUp.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {followUp.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Parent Request Link (For Follow-Ups) */}
           {request.is_follow_up && request.parent_request_id && (
             <div className="mt-6 bg-blue-50 shadow rounded-lg p-6 border-l-4 border-blue-500">
               <h3 className="text-sm font-medium text-blue-900 mb-2">
                 ↩️ This is a follow-up request
               </h3>
-              <Button
-                variant="outline"
+                <Button
+                  variant="outline"
                 size="sm"
                 onClick={() => router.push(`/request/${request.parent_request_id}`)}
               >
                 View Original Request
-              </Button>
+                </Button>
             </div>
           )}
         </div>
       </div>
-    </div>
+
+      {/* Follow-Up Modal */}
+      {followUpModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm"
+          onClick={() => setFollowUpModalOpen(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-2xl max-w-3xl w-full mx-4 max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`p-6 border-b ${
+              followUpModalContent.type === 'client_reminder' 
+                ? 'bg-orange-50 border-orange-200' 
+                : followUpModalContent.type === 'dissatisfaction'
+                ? 'bg-red-50 border-red-200'
+                : 'bg-green-50 border-green-200'
+            }`}>
+              <div className="flex items-start justify-between">
+                <div className="flex items-start space-x-3">
+                  {followUpModalContent.type === 'client_reminder' ? (
+                    <Bell className="w-6 h-6 text-orange-600 mt-1" />
+                  ) : followUpModalContent.type === 'dissatisfaction' ? (
+                    <AlertTriangle className="w-6 h-6 text-red-600 mt-1" />
+                  ) : (
+                    <CheckCircle2 className="w-6 h-6 text-green-600 mt-1" />
+                  )}
+                  <div>
+                    <h2 className={`text-xl font-semibold ${
+                      followUpModalContent.type === 'client_reminder' 
+                        ? 'text-orange-900' 
+                        : followUpModalContent.type === 'dissatisfaction'
+                        ? 'text-red-900'
+                        : 'text-green-900'
+                    }`}>
+                      {followUpModalContent.type === 'client_reminder' 
+                        ? 'Client Reminder' 
+                        : followUpModalContent.type === 'dissatisfaction'
+                        ? 'Client Dissatisfaction'
+                        : 'Client Confirmation'}
+                    </h2>
+                    <div className="flex items-center space-x-3 mt-1">
+                      {followUpModalContent.type && (
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                          followUpModalContent.type === 'client_reminder'
+                            ? 'bg-orange-100 text-orange-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {followUpModalContent.count}x follow-up{followUpModalContent.count > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {followUpModalContent.date && (
+                        <span className="text-sm text-gray-600">
+                          {new Date(followUpModalContent.date).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setFollowUpModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
+              <div className="prose max-w-none">
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Client Message:</p>
+                  <div className="text-gray-800 whitespace-pre-wrap">
+                    {followUpModalContent.message}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t bg-gray-50">
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => setFollowUpModalOpen(false)}
+                  variant="outline"
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
   );
 }

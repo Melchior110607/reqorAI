@@ -73,6 +73,7 @@ class AIClassificationService:
             if result['classification'] in [
                 EmailClassification.RESPONSE_TO_REQUEST.value, 
                 EmailClassification.NEW_REQUEST.value,
+                EmailClassification.CONFIRMATION.value,  # NEW: Agent for incoming request confirmations
                 EmailClassification.CLIENT_REMINDER.value,
                 EmailClassification.DISSATISFACTION.value,
                 EmailClassification.MIXED.value  # MIXED sera traité par agent_mixed
@@ -125,7 +126,7 @@ Respond in JSON format:
 
 FOR MIXED CLASSIFICATIONS:
 YOU MUST SEGMENT THE EMAIL CONTENT into separate parts for each classification.
-Extract the relevant portion of the email for each sub-classification.
+Summarise the relevant portion of the email for each sub-classification.
 
 Respond in JSON format:
 {
@@ -134,17 +135,17 @@ Respond in JSON format:
     {
       "classification": "new_request",
       "related_requests": [],
-      "email_segment": "The specific part of the email about the new request..."
+      "email_segment": "Summary of the part of the request responding to request ..."
     },
     {
       "classification": "response_to_request",
       "related_requests": [5],
-      "email_segment": "The specific part of the email responding to request 5..."
+      "email_segment": "Summary of the part of the request responding to request 5..."
     }
   ]
 }
 
-IMPORTANT: Each sub_classification MUST have an "email_segment" field containing ONLY the relevant portion of the original email.
+IMPORTANT: Each sub_classification MUST have an "email_segment" field containing ONLY the SUMMARY of the relevant portion of the original email.
 
 Valid classification values: response_to_request, new_request, confirmation, client_reminder, dissatisfaction, mixed, unclassified
 """

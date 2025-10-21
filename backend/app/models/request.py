@@ -65,6 +65,8 @@ class Request(Base):
     parent_request_id = Column(Integer, ForeignKey("requests.id"), nullable=True)
     follow_up_type = Column(String(50), nullable=True)  # 'client_reminder' or 'dissatisfaction'
     follow_up_count = Column(Integer, default=0)
+    latest_follow_up_message = Column(Text, nullable=True)  # Latest client follow-up message
+    latest_follow_up_at = Column(DateTime(timezone=True), nullable=True)  # When the latest follow-up was received
     
     # Foreign Keys
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)

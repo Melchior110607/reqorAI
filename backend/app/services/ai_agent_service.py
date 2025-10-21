@@ -10,6 +10,7 @@ import openai
 from app.models.intercepted_email import InterceptedEmail, EmailClassification
 from app.models.request import Request, RequestType, RequestStatus, RequestPriority
 from app.models.client import Client
+from app.models.user import User
 from app.database.config import settings
 from app.services.rag_service import RAGService
 
@@ -27,6 +28,8 @@ class AIAgentService:
                 return self.agent_response_to_request(email)
             elif email.ai_classification == EmailClassification.NEW_REQUEST:
                 return self.agent_new_request(email)
+            elif email.ai_classification == EmailClassification.CONFIRMATION:
+                return self.agent_confirmation(email)
             elif email.ai_classification == EmailClassification.CLIENT_REMINDER:
                 return self.agent_client_reminder(email)
             elif email.ai_classification == EmailClassification.DISSATISFACTION:
@@ -47,7 +50,8 @@ class AIAgentService:
     
     def agent_response_to_request(self, email: InterceptedEmail) -> Dict[str, Any]:
         """
-        Agent 1: Updates outgoing request as confirmed with non-PII message
+        Agent 1: Updates OUTGOING request as confirmed
+        (Client confirms they received our request)
         """
         print(f"🤖 Agent 1: Processing RESPONSE_TO_REQUEST for email {email.id}")
         
@@ -75,19 +79,16 @@ class AIAgentService:
                 print(f"⚠️ Request {request_id} not found")
                 continue
             
-            # Only update OUTGOING requests
+            # Only handle OUTGOING requests
             if request.type != RequestType.OUTGOING:
                 print(f"ℹ️ Skipping non-outgoing request {request_id}")
                 continue
             
-            # Update confirmation fields
             request.confirmation_received = True
             request.confirmation_received_at = datetime.now(timezone.utc)
-            # Use original body (with PII) for confirmation details - user should see full message
             request.confirmation_details = email.body
-            
             updated_requests.append(request.id)
-            print(f"✅ Updated request {request.id} as confirmed")
+            print(f"✅ Updated OUTGOING request {request.id} as confirmed")
         
         # Mark email as agent_processed
         email.agent_processed = True
@@ -100,6 +101,84 @@ class AIAgentService:
             'agent': 'response_to_request',
             'updated_requests': updated_requests,
             'message': f'Confirmed {len(updated_requests)} outgoing request(s)'
+        }
+    
+    def agent_confirmation(self, email: InterceptedEmail) -> Dict[str, Any]:
+        """
+        Agent CONFIRMATION: Handles INCOMING request confirmations
+        (Client confirms they are satisfied with our response)
+        
+        Actions:
+        1. Mark request as confirmed
+        2. Clear any client reminders (they're satisfied!)
+        3. Mark request as COMPLETED
+        """
+        print(f"🤖 Agent CONFIRMATION: Processing CONFIRMATION for email {email.id}")
+        
+        # Get related request IDs
+        related_request_ids = []
+        if email.related_request_ids:
+            try:
+                related_request_ids = json.loads(email.related_request_ids)
+            except:
+                related_request_ids = []
+        
+        if not related_request_ids:
+            print(f"⚠️ No related requests found in email {email.id}")
+            return {'success': False, 'message': 'No related requests found'}
+        
+        updated_requests = []
+        
+        for request_id in related_request_ids:
+            request = self.db.query(Request).filter(
+                Request.id == request_id,
+                Request.user_id == email.user_id
+            ).first()
+            
+            if not request:
+                print(f"⚠️ Request {request_id} not found")
+                continue
+            
+            # Only handle INCOMING requests
+            if request.type != RequestType.INCOMING:
+                print(f"ℹ️ Skipping non-incoming request {request_id}")
+                continue
+            
+            print(f"📋 Processing INCOMING request {request.id}: {request.title}")
+            
+            # 1. Mark as confirmed
+            request.confirmation_received = True
+            request.confirmation_received_at = datetime.now(timezone.utc)
+            request.confirmation_details = email.body
+            print(f"   ✓ Marked as confirmed")
+            
+            # 2. Clear any previous client reminders (they're satisfied now!)
+            if request.follow_up_type or request.follow_up_count > 0:
+                print(f"   🧹 Clearing {request.follow_up_count} previous reminder(s)")
+                request.follow_up_type = None
+                request.follow_up_count = 0
+                request.latest_follow_up_message = None
+                request.latest_follow_up_at = None
+            
+            # 3. Mark as COMPLETED since client is satisfied
+            old_status = request.status
+            request.status = RequestStatus.COMPLETED
+            print(f"   ✓ Status updated: {old_status} → COMPLETED")
+            
+            updated_requests.append(request.id)
+            print(f"✅ Confirmation complete for request {request.id}")
+        
+        # Mark email as agent_processed
+        email.agent_processed = True
+        email.agent_action_taken = f"Agent CONFIRMATION: Confirmed {len(updated_requests)} incoming request(s)"
+        
+        self.db.commit()
+        
+        return {
+            'success': True,
+            'agent': 'confirmation',
+            'updated_requests': updated_requests,
+            'message': f'Confirmed and completed {len(updated_requests)} incoming request(s)'
         }
     
     def agent_new_request(self, email: InterceptedEmail) -> Dict[str, Any]:
@@ -119,6 +198,9 @@ class AIAgentService:
         # Extract title from subject or first line of body
         title = email.subject if email.subject else (email.body[:100] + "...")
         
+        # Extract due date using AI
+        due_date = self._extract_due_date(email)
+        
         # Create new incoming request
         new_request = Request(
             title=title,
@@ -128,8 +210,11 @@ class AIAgentService:
             priority=RequestPriority.MEDIUM,
             client_id=email.client_id,
             user_id=email.user_id,
-            email_connection_id=email.connection_id  # Link to receiving email connection
+            email_connection_id=email.connection_id,  # Link to receiving email connection
+            due_date=due_date  # AI-extracted due date
         )
+
+    
         
         self.db.add(new_request)
         self.db.flush()  # Get the ID
@@ -140,7 +225,7 @@ class AIAgentService:
         try:
             draft_response = self._generate_draft_response(
                 email=email,
-                client=client,
+                client=client,      
                 user_id=email.user_id
             )
             
@@ -177,6 +262,65 @@ class AIAgentService:
             'message': f'Created incoming request {new_request.id}'
         }
     
+    def _extract_due_date(self, email: InterceptedEmail) -> Optional[datetime]:
+        """
+        Extract due date from email using AI
+        Returns None if no due date is mentioned
+        """
+        try:
+            system_prompt = """You are a date extraction assistant. 
+Your task is to extract any deadline, due date, or delivery date mentioned in the email.
+
+IMPORTANT:
+- If a date is mentioned, return it in ISO format: YYYY-MM-DD
+- If no date is mentioned, return: "NONE"
+- Consider phrases like: "by next Monday", "deadline is March 15", "need it before Friday", "due on..."
+- Today's date for reference: {today}
+- If only a day is mentioned (like "Monday"), assume it's the next occurrence of that day
+
+Return ONLY the date in YYYY-MM-DD format or "NONE" - no other text."""
+            
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            system_prompt = system_prompt.format(today=today)
+            
+            user_prompt = f"""Email Subject: {email.subject}
+
+Email Body:
+{email.body}
+
+Extract the due date (return YYYY-MM-DD or "NONE")."""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.0,  # Deterministic
+                max_tokens=50
+            )
+            
+            extracted = response.choices[0].message.content.strip()
+            print(f"📅 AI extracted due date: {extracted}")
+            
+            if extracted.upper() == "NONE":
+                return None
+            
+            # Parse the date
+            try:
+                # Try parsing ISO format
+                parsed_date = datetime.strptime(extracted, "%Y-%m-%d")
+                # Set time to end of day (23:59:59)
+                parsed_date = parsed_date.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+                return parsed_date
+            except ValueError:
+                print(f"⚠️ Could not parse extracted date: {extracted}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error extracting due date: {str(e)}")
+            return None
+    
     def _generate_draft_response(
         self, 
         email: InterceptedEmail, 
@@ -184,6 +328,10 @@ class AIAgentService:
         user_id: int
     ) -> str:
         """Generate draft response using OpenAI with RAG context"""
+        
+        # Get user signature
+        user = self.db.query(User).filter(User.id == user_id).first()
+        user_signature = user.email_signature if user and user.email_signature else ""
         
         # Get relevant knowledge base context
         rag_context = self.rag_service.get_context_from_documents(
@@ -193,6 +341,10 @@ class AIAgentService:
         )
         
         # Prepare system prompt
+        signature_note = """
+
+IMPORTANT: The user has configured an email signature. DO NOT include any closing (like "Best regards", "Sincerely", name, title, etc.) in your response. The signature will be automatically appended after your message.""" if user_signature else ""
+        
         system_prompt = f"""You are a professional business email assistant. 
 Your task is to draft a response to a client's request.
 
@@ -201,11 +353,13 @@ CLIENT INFORMATION:
 - Company: {client.company}
 - Email: {client.email}
 
+{signature_note}
+
 Write a professional, helpful, and courteous response. Be concise but complete.
 If knowledge base documents are provided, use them to give accurate information.
 If you don't have enough information, politely indicate what additional details you need.
 
-Format the response as a complete email (but without subject line or greeting - just the body)."""
+Format the response as a complete email body (without subject line or greeting, and WITHOUT closing/signature if one is configured)."""
         
         # Prepare user prompt
         user_prompt = f"""CLIENT'S REQUEST:
@@ -229,6 +383,11 @@ Please draft a professional response to this request."""
         )
         
         draft = response.choices[0].message.content
+        
+        # Append signature if configured
+        if user_signature:
+            draft = f"{draft}\n\n{user_signature}"
+        
         return draft
     
     def regenerate_draft_response(self, request_id: int, user_id: int) -> Dict[str, Any]:
@@ -288,8 +447,26 @@ Please draft a professional response to this request."""
         """
         print(f"🤖 Agent 3: Processing CLIENT_REMINDER for email {email.id}")
         
-        # Find the request being reminded about
-        parent_request = self._find_parent_request_for_reminder(email)
+        # PRIORITY 1: Use AI-identified related_request_ids if available
+        parent_request = None
+        if email.related_request_ids:
+            try:
+                related_ids = json.loads(email.related_request_ids)
+                if related_ids:
+                    # Get the first related request (AI identified this as the parent)
+                    parent_request = self.db.query(Request).filter(
+                        Request.id == related_ids[0],
+                        Request.user_id == email.user_id
+                    ).first()
+                    if parent_request:
+                        print(f"📎 Using AI-identified parent request: {parent_request.id}")
+            except:
+                pass
+        
+        # FALLBACK: If no AI-identified parent, use heuristic search
+        if not parent_request:
+            print(f"🔍 No AI-identified parent, searching by similarity...")
+            parent_request = self._find_parent_request_for_reminder(email)
         
         if not parent_request:
             print(f"⚠️ No parent request found for client reminder, treating as NEW_REQUEST")
@@ -298,14 +475,14 @@ Please draft a professional response to this request."""
         
         print(f"📎 Found request to update: {parent_request.id} - {parent_request.title}")
         
-        # Update the existing request
+        # Update the existing request (NO description modification - displayed in UI separately)
         parent_request.priority = RequestPriority.HIGH  # Elevate to HIGH
         parent_request.follow_up_count = (parent_request.follow_up_count or 0) + 1
         parent_request.follow_up_type = 'client_reminder'  # Mark as having client reminder
         
-        # Add reminder note to description
-        reminder_note = f"\n\n--- CLIENT REMINDER ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}) ---\n{email.body}"
-        parent_request.description = parent_request.description + reminder_note
+        # Store the latest follow-up message for UI display
+        parent_request.latest_follow_up_message = email.body  # Original email with PII for user to see
+        parent_request.latest_follow_up_at = datetime.now(timezone.utc)
         
         self.db.commit()
         
@@ -346,8 +523,26 @@ Please draft a professional response to this request."""
         """
         print(f"🤖 Agent 4: Processing DISSATISFACTION for email {email.id}")
         
-        # Find the original request that client is dissatisfied with
-        parent_request = self._find_parent_request_for_dissatisfaction(email)
+        # PRIORITY 1: Use AI-identified related_request_ids if available
+        parent_request = None
+        if email.related_request_ids:
+            try:
+                related_ids = json.loads(email.related_request_ids)
+                if related_ids:
+                    # Get the first related request (AI identified this as the parent)
+                    parent_request = self.db.query(Request).filter(
+                        Request.id == related_ids[0],
+                        Request.user_id == email.user_id
+                    ).first()
+                    if parent_request:
+                        print(f"📎 Using AI-identified parent request: {parent_request.id}")
+            except:
+                pass
+        
+        # FALLBACK: If no AI-identified parent, use heuristic search
+        if not parent_request:
+            print(f"🔍 No AI-identified parent, searching by dissatisfaction heuristic...")
+            parent_request = self._find_parent_request_for_dissatisfaction(email)
         
         if not parent_request:
             print(f"⚠️ No parent request found for dissatisfaction, treating as NEW_REQUEST")
@@ -355,14 +550,14 @@ Please draft a professional response to this request."""
         
         print(f"📎 Found request to update: {parent_request.id} - {parent_request.title}")
         
-        # Update the existing request
+        # Update the existing request (NO description modification - displayed in UI separately)
         parent_request.priority = RequestPriority.URGENT  # Elevate to URGENT (highest)
         parent_request.follow_up_count = (parent_request.follow_up_count or 0) + 1
         parent_request.follow_up_type = 'dissatisfaction'  # Mark as dissatisfaction
         
-        # Add dissatisfaction note to description
-        dissatisfaction_note = f"\n\n--- CLIENT DISSATISFACTION ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}) ---\n{email.body}"
-        parent_request.description = parent_request.description + dissatisfaction_note
+        # Store the latest follow-up message for UI display
+        parent_request.latest_follow_up_message = email.body  # Original email with PII for user to see
+        parent_request.latest_follow_up_at = datetime.now(timezone.utc)
         
         # Generate ENHANCED draft response with MORE context from RAG
         client = self.db.query(Client).filter(Client.id == email.client_id).first()
@@ -466,6 +661,10 @@ Please draft a professional response to this request."""
         Generate ENHANCED response for DISSATISFACTION with MORE RAG context
         """
         try:
+            # Get user signature
+            user = self.db.query(User).filter(User.id == email.user_id).first()
+            user_signature = user.email_signature if user and user.email_signature else ""
+            
             # Get MORE context from knowledge base (top 10 chunks instead of 5)
             rag_context = self.rag_service.get_context_from_documents(
                 query=f"{parent_request.title} {email.anonymized_body}",
@@ -473,7 +672,9 @@ Please draft a professional response to this request."""
                 max_tokens=3000  # More tokens for enhanced response
             )
             
-            system_prompt = """You are a professional business assistant.
+            signature_note = "\n\nIMPORTANT: The user has configured an email signature. DO NOT include any closing (like 'Best regards', 'Sincerely', name, title, etc.). The signature will be automatically appended." if user_signature else ""
+            
+            system_prompt = f"""You are a professional business assistant.
 The client was dissatisfied with the previous response and needs MORE detailed information.
 
 Your response should:
@@ -482,7 +683,7 @@ Your response should:
 - Address their specific concerns
 - Be thorough and comprehensive
 - Maintain a helpful, professional tone
-- Be 2-3 paragraphs"""
+- Be 2-3 paragraphs{signature_note}"""
             
             user_prompt = f"""CLIENT: {client.company}
 ORIGINAL REQUEST: {parent_request.title}
@@ -503,11 +704,21 @@ Generate an enhanced, more detailed response addressing their concerns."""
                 max_tokens=1000
             )
             
-            return response.choices[0].message.content
+            draft = response.choices[0].message.content
+            
+            # Append signature if configured
+            if user_signature:
+                draft = f"{draft}\n\n{user_signature}"
+            
+            return draft
             
         except Exception as e:
             print(f"❌ Error generating enhanced response: {str(e)}")
-            return "We apologize for the insufficient information in our previous response. Let us provide more detailed information to address your concerns."
+            fallback = "We apologize for the insufficient information in our previous response. Let us provide more detailed information to address your concerns."
+            user = self.db.query(User).filter(User.id == email.user_id).first()
+            if user and user.email_signature:
+                fallback = f"{fallback}\n\n{user.email_signature}"
+            return fallback
     
     def agent_mixed(self, email: InterceptedEmail) -> Dict[str, Any]:
         """
@@ -542,6 +753,7 @@ Generate an enhanced, more detailed response addressing their concerns."""
         print(f"📋 Processing {len(sub_classifications)} sub-classifications")
         
         results = []
+        created_requests = []  # Track requests created during processing
         
         # Store original email data to restore later
         original_classification = email.ai_classification
@@ -553,6 +765,15 @@ Generate an enhanced, more detailed response addressing their concerns."""
             classification = sub.get('classification')
             related_requests = sub.get('related_requests', [])
             email_segment = sub.get('email_segment', '')
+            
+            # 🔗 IMPORTANT: If previous agents created requests, add them to related_requests
+            # This ensures CLIENT_REMINDER can find the request created by NEW_REQUEST
+            if created_requests and classification in [
+                EmailClassification.CLIENT_REMINDER.value,
+                EmailClassification.DISSATISFACTION.value
+            ]:
+                related_requests.extend(created_requests)
+                print(f"  🔗 Added {len(created_requests)} newly created requests to related_requests")
             
             print(f"  {i+1}. {classification} (related requests: {related_requests})")
             print(f"     Email segment: {email_segment[:100]}...")
@@ -571,7 +792,7 @@ Generate an enhanced, more detailed response addressing their concerns."""
             
             # Keep original body for user reference (will be stored in request description)
             # But add a note about which part is relevant
-            email.body = f"[ORIGINAL EMAIL - Relevant section extracted below]\n\n{original_body}\n\n[EXTRACTED SECTION FOR THIS REQUEST]\n{email_segment}"
+            email.body = f"{email_segment}\n\n[ORIGINAL EMAIL - Full Context]\n{original_body}"
             
             # Route to appropriate agent
             try:
@@ -579,17 +800,19 @@ Generate an enhanced, more detailed response addressing their concerns."""
                     result = self.agent_response_to_request(email)
                 elif classification == EmailClassification.NEW_REQUEST.value:
                     result = self.agent_new_request(email)
+                    # Track the created request ID
+                    print(f"  📊 NEW_REQUEST result: success={result.get('success')}, request_id={result.get('request_id')}")
+                    if result.get('success') and result.get('request_id'):
+                        created_requests.append(result['request_id'])
+                        print(f"  ✅ Created request #{result['request_id']}, added to tracking (total: {len(created_requests)})")
+                    else:
+                        print(f"  ⚠️ NEW_REQUEST did not return request_id, cannot track")
+                elif classification == EmailClassification.CONFIRMATION.value:
+                    result = self.agent_confirmation(email)
                 elif classification == EmailClassification.CLIENT_REMINDER.value:
                     result = self.agent_client_reminder(email)
                 elif classification == EmailClassification.DISSATISFACTION.value:
                     result = self.agent_dissatisfaction(email)
-                elif classification == EmailClassification.CONFIRMATION.value:
-                    # Confirmation doesn't have an agent, just note it
-                    result = {
-                        'success': True,
-                        'message': 'Confirmation noted',
-                        'classification': classification
-                    }
                 else:
                     result = {
                         'success': False,

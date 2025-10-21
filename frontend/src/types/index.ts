@@ -5,6 +5,7 @@ export interface User {
   first_name?: string;
   last_name?: string;
   phone?: string;
+  email_signature?: string;
   created_at: string;
   updated_at: string;
 }
@@ -91,6 +92,8 @@ export interface Request {
   parent_request_id?: number;
   follow_up_type?: 'client_reminder' | 'dissatisfaction';
   follow_up_count?: number;
+  latest_follow_up_message?: string;
+  latest_follow_up_at?: string;
 }
 
 export interface RequestWithClient extends Request {

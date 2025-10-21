@@ -165,6 +165,18 @@ def get_requests(
             "confirmation_received": request.confirmation_received,
             "confirmation_received_at": request.confirmation_received_at,
             "confirmation_details": request.confirmation_details,
+            # Reminder fields (for outgoing requests)
+            "reminder_enabled": request.reminder_enabled,
+            "reminder_message": request.reminder_message,
+            "last_reminder_sent_at": request.last_reminder_sent_at,
+            "reminder_count": request.reminder_count,
+            # Follow-up fields (for incoming requests)
+            "is_follow_up": request.is_follow_up,
+            "parent_request_id": request.parent_request_id,
+            "follow_up_type": request.follow_up_type,
+            "follow_up_count": request.follow_up_count,
+            "latest_follow_up_message": request.latest_follow_up_message,
+            "latest_follow_up_at": request.latest_follow_up_at,
             "email_recipients": [],
             "attachments": []
         }
@@ -246,6 +258,18 @@ def get_request(
         "confirmation_received": request.confirmation_received,
         "confirmation_received_at": request.confirmation_received_at,
         "confirmation_details": request.confirmation_details,
+        # Reminder fields (for outgoing requests)
+        "reminder_enabled": request.reminder_enabled,
+        "reminder_message": request.reminder_message,
+        "last_reminder_sent_at": request.last_reminder_sent_at,
+        "reminder_count": request.reminder_count,
+        # Follow-up fields (for incoming requests)
+        "is_follow_up": request.is_follow_up,
+        "parent_request_id": request.parent_request_id,
+        "follow_up_type": request.follow_up_type,
+        "follow_up_count": request.follow_up_count,
+        "latest_follow_up_message": request.latest_follow_up_message,
+        "latest_follow_up_at": request.latest_follow_up_at,
         "email_recipients": [],
         "attachments": []
     }
@@ -706,4 +730,76 @@ def get_conversation_thread(
         "thread_length": len(thread),
         "total_follow_ups": len(follow_ups),
         "conversation": thread
+    }
+
+
+@router.post("/{request_id}/mark-confirmation")
+def mark_confirmation(
+    request_id: int,
+    confirmation_details: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Manually mark an outgoing request as confirmed"""
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Only for outgoing requests
+    if request.type != RequestType.OUTGOING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only outgoing requests can be marked as confirmed"
+        )
+    
+    # Update confirmation fields
+    request.confirmation_received = True
+    request.confirmation_received_at = datetime.now(timezone.utc)
+    if confirmation_details:
+        request.confirmation_details = confirmation_details
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Request marked as confirmed",
+        "confirmation_received_at": request.confirmation_received_at
+    }
+
+
+@router.delete("/{request_id}/unmark-confirmation")
+def unmark_confirmation(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Remove confirmation status from an outgoing request"""
+    request = db.query(Request).filter(
+        Request.id == request_id,
+        Request.user_id == current_user.id
+    ).first()
+    
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+    
+    # Clear confirmation fields
+    request.confirmation_received = False
+    request.confirmation_received_at = None
+    request.confirmation_details = None
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Confirmation status removed"
     }

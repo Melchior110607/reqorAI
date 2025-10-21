@@ -36,7 +36,7 @@ def update_current_user(
 ):
     """Update current user profile"""
     # Update allowed fields
-    allowed_fields = ['company_name', 'first_name', 'last_name', 'phone']
+    allowed_fields = ['company_name', 'first_name', 'last_name', 'phone', 'email_signature']
     for field in allowed_fields:
         if field in update_data:
             setattr(current_user, field, update_data[field])

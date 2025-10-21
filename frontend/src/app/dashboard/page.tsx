@@ -256,7 +256,7 @@ END:VCALENDAR`;
             {calendarDays.map((day, index) => (
               <div
                 key={index}
-                className={`min-h-[80px] p-1.5 bg-white transition-all ${
+                className={`min-h-[60px] p-1.5 bg-white transition-all ${
                   day.isToday
                     ? 'bg-blue-50 border-2 border-blue-400'
                     : day.isCurrentMonth

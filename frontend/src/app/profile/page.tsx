@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { requestsAPI, authAPI } from '@/services/api';
 import { RequestWithClient } from '@/types';
-import { User, Building, Mail, Phone, Calendar, Activity } from 'lucide-react';
+import { User, Building, Mail, Phone, Calendar, Activity, FileText } from 'lucide-react';
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -18,6 +19,7 @@ export default function ProfilePage() {
     first_name: user?.first_name || '',
     last_name: user?.last_name || '',
     phone: user?.phone || '',
+    email_signature: user?.email_signature || '',
   });
 
   useEffect(() => {
@@ -63,6 +65,7 @@ export default function ProfilePage() {
       first_name: user?.first_name || '',
       last_name: user?.last_name || '',
       phone: user?.phone || '',
+      email_signature: user?.email_signature || '',
     });
     setIsEditing(false);
   };
@@ -130,6 +133,18 @@ export default function ProfilePage() {
                       value={formData.phone}
                       onChange={handleChange}
                     />
+                    
+                    <Textarea
+                      label="Email Signature"
+                      name="email_signature"
+                      value={formData.email_signature}
+                      onChange={handleChange}
+                      rows={4}
+                      placeholder="Best regards,&#10;John Doe&#10;CEO, Company Inc.&#10;john@company.com"
+                    />
+                    <p className="text-xs text-gray-500 -mt-4">
+                      This signature will be automatically added to all AI-generated emails.
+                    </p>
 
                     <div className="flex justify-end space-x-3">
                       <Button type="button" variant="outline" onClick={handleCancel}>
@@ -193,6 +208,28 @@ export default function ProfilePage() {
                             <p className="text-sm font-medium text-gray-500">Member since</p>
                             <p className="text-gray-900">{new Date(user.created_at).toLocaleDateString()}</p>
                           </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Email Signature Section */}
+                    <div className="mt-6 pt-6 border-t border-gray-200">
+                      <div className="flex items-start space-x-3">
+                        <FileText className="w-5 h-5 text-gray-400 mt-1" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-500 mb-2">Email Signature</p>
+                          {user.email_signature ? (
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                              <pre className="text-sm text-gray-800 whitespace-pre-wrap font-sans">
+                                {user.email_signature}
+                              </pre>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500 italic">No signature configured</p>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2">
+                            Automatically added to AI-generated emails
+                          </p>
                         </div>
                       </div>
                     </div>

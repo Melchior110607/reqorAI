@@ -43,6 +43,13 @@ class RequestResponse(RequestBase):
     reminder_message: Optional[str] = None
     last_reminder_sent_at: Optional[datetime] = None
     reminder_count: int = 0
+    # Follow-up tracking (for incoming requests)
+    is_follow_up: bool = False
+    parent_request_id: Optional[int] = None
+    follow_up_type: Optional[str] = None  # 'client_reminder' or 'dissatisfaction'
+    follow_up_count: int = 0
+    latest_follow_up_message: Optional[str] = None
+    latest_follow_up_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

@@ -414,6 +414,17 @@ class OutlookWebhookService:
                 print("⚠️ No subscription found, creating new one")
                 return self.create_subscription(connection)
             
+            # 🔑 REFRESH TOKEN BEFORE RENEWAL (critical!)
+            print(f"🔑 Refreshing access token for {connection.email_address}...")
+            if not self.outlook_service.refresh_token(connection):
+                error_msg = "Failed to refresh access token"
+                print(f"❌ {error_msg}")
+                subscription.status = 'failed'
+                subscription.last_error = error_msg
+                self.db.commit()
+                raise Exception(error_msg)
+            print(f"✅ Token refreshed successfully")
+            
             # New expiration (3 days from now)
             expires_at = datetime.now(timezone.utc) + timedelta(days=3)
             expiration_datetime = expires_at.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
