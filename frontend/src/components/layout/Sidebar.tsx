@@ -11,6 +11,7 @@ import {
   Mail,
   Sparkles,
   BookOpen,
+  MessageCircle,
 } from 'lucide-react';
 
 export function Sidebar() {
@@ -22,6 +23,7 @@ export function Sidebar() {
     { href: '/incoming-requests', label: 'Incoming', icon: ArrowDownLeft },
     { href: '/knowledge-base', label: 'Knowledge Base', icon: BookOpen },
     { href: '/clients', label: 'Clients', icon: Users },
+    { href: '/reqor-chat', label: 'Reqor Assistant', icon: MessageCircle },
     { href: '/email-settings', label: 'Email', icon: Mail },
     { href: '/ai-classification', label: 'AI Classification', icon: Sparkles },
     { href: '/profile', label: 'Profile', icon: User },

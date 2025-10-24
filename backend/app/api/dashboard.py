@@ -89,13 +89,18 @@ def get_dashboard_overview(
 def get_calendar_view(
     start_date: Optional[str] = Query(None, description="ISO format: YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="ISO format: YYYY-MM-DD"),
+    year: Optional[int] = Query(None, description="Year for calendar view"),
+    month: Optional[int] = Query(None, description="Month for calendar view (1-12)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get calendar view of requests with due dates
     
-    Default: current month if no dates provided
+    Can use either:
+    - start_date & end_date (ISO format)
+    - year & month (integers)
+    - Default: current month if no dates provided
     """
     # Parse dates or use current month
     if start_date and end_date:
@@ -106,6 +111,21 @@ def get_calendar_view(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid date format. Use YYYY-MM-DD"
+            )
+    elif year and month:
+        # Use provided year and month
+        try:
+            start = datetime(year, month, 1, 0, 0, 0, tzinfo=timezone.utc)
+            # Last day of month
+            if month == 12:
+                end = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc) - timedelta(days=1)
+            else:
+                end = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=timezone.utc) - timedelta(days=1)
+            end = end.replace(hour=23, minute=59, second=59)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid year or month"
             )
     else:
         # Default to current month

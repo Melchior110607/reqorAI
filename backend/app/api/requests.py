@@ -3,12 +3,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List, Optional
 import json
+from datetime import datetime, timezone, timedelta
 from app.database.config import get_db
 from app.schemas.request import RequestCreate, RequestUpdate, RequestResponse, RequestWithClient
 from app.models.request import Request, RequestType, RequestStatus, RequestPriority
 from app.models.client import Client
 from app.models.user import User
 from app.api.dependencies import get_current_user
+import openai
+from app.database.config import settings
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -591,7 +594,7 @@ def send_reminder_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Manually send a reminder for an outgoing request"""
+    """Manually send a reminder for an outgoing request and digga"""
     from app.services.reminder_service import ReminderService
     
     # Get request
@@ -802,4 +805,223 @@ def unmark_confirmation(
     return {
         "success": True,
         "message": "Confirmation status removed"
+    }
+
+@router.post("/ai-chat")
+def ai_chat_request(
+    chat_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Conversational AI endpoint for creating requests
+    
+    Body: {
+        "message": "user message",
+        "conversation_history": [
+            {"role": "user", "content": "..."},
+            {"role": "assistant", "content": "..."}
+        ],
+        "extracted_data": {
+            "title": "...",
+            "description": "...",
+            "client_name": "...",
+            ...
+        }
+    }
+    """
+    user_message = chat_data.get("message", "")
+    conversation_history = chat_data.get("conversation_history", [])
+    extracted_data = chat_data.get("extracted_data", {})
+    
+    if not user_message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message is required"
+        )
+    
+    # Get all clients for the user (for matching)
+    clients = db.query(Client).filter(Client.user_id == current_user.id).all()
+    clients_list = [{"id": c.id, "name": c.name, "company": c.company, "email": c.email} for c in clients]
+    
+    # Get email connections for the user
+    from app.models.email_connection import EmailConnection
+    email_connections = db.query(EmailConnection).filter(EmailConnection.user_id == current_user.id).all()
+    email_connections_list = [{"id": ec.id, "email": ec.email_address, "provider": ec.provider.value} for ec in email_connections]
+    
+    # Initialize OpenAI client
+    client = openai.OpenAI(api_key=settings.openai_api_key)
+    
+    # Build system prompt
+    system_prompt = f"""You are Reqor, a conversational AI assistant that helps create requests.
+
+CRITICAL RULES:
+1. YOU create the title and description yourself from the user's brief description - DON'T ASK FOR THEM
+2. NEVER AS QUESTIONS IF HE MENTIONS EVERYTHING.
+3. ONLY ask for: client (if not mentioned), due_date (if not mentioned), priority (if not clear), type (if not clear), email_connection_id (for outgoing requests only), reminder settings (for outgoing requests)
+4. Keep questions SHORT and ONE at a time
+5. When you have ALL required info, return ONLY the JSON (no extra text)
+
+INFORMATION NEEDED:
+- **title**: YOU create this (short, clear) - DON'T ASK
+- **description**: YOU create this (detailed) - DON'T ASK  
+- **type**: "incoming" (from client) or "outgoing" (to client) - ask if unclear
+- **priority**: "low", "medium", "high", or "urgent" - ask if not obvious
+- **client_id**: Match from list below - ask if not mentioned
+- **due_date**: ISO format YYYY-MM-DD - ask if not mentioned
+- **email_connection_id**: For outgoing requests, which email to use - ask user to choose
+- **reminder_enabled**: For OUTGOING requests only, ask "Would you like automatic reminders?"
+- **reminder_frequency**: If reminder enabled, ask frequency: "never", "daily", "weekly", "biweekly", "monthly"
+
+AVAILABLE CLIENTS:
+{json.dumps(clients_list, indent=2)}
+
+AVAILABLE EMAIL ACCOUNTS (for outgoing requests):
+{json.dumps(email_connections_list, indent=2)}
+
+CURRENT DATE: {datetime.now().strftime("%Y-%m-%d %A")}
+
+ALREADY EXTRACTED DATA:
+{json.dumps(extracted_data, indent=2)}
+
+WHEN READY, return ONLY this JSON (ABSOLUTELY NO OTHER TEXT, NO EXPLANATIONS, NO GREETINGS):
+{{
+    "action": "create_request",
+    "ready": true,
+    "data": {{
+        "title": "YOUR_CREATED_TITLE",
+        "description": "YOUR_CREATED_DESCRIPTION",
+        "type": "incoming/outgoing",
+        "priority": "low/medium/high/urgent",
+        "client_id": 123,
+        "due_date": "YYYY-MM-DD",
+        "email_connection_id": 1,
+        "reminder_enabled": true/false,
+        "reminder_frequency": "never/daily/weekly/biweekly/monthly"
+    }}
+}}
+
+CRITICAL: When you have all info, respond with ONLY the JSON above. NO "Here is your request", NO "Perfect", NOTHING ELSE. Just the raw JSON.
+
+NOTES:
+- email_connection_id is ONLY for outgoing requests. For incoming, omit it or set to null.
+- reminder_enabled and reminder_frequency are ONLY for outgoing requests. For incoming, omit them.
+- If user doesn't want reminders, set reminder_enabled to false and reminder_frequency to "never".
+"""
+    
+    # Build conversation with history
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": user_message})
+    
+    # Call OpenAI
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=1000
+    )
+    
+    assistant_message = response.choices[0].message.content.strip()
+    
+    # Try to extract JSON from response (in case AI added text around it)
+    import re
+    json_match = re.search(r'\{[\s\S]*"action"\s*:\s*"create_request"[\s\S]*\}', assistant_message)
+    
+    if json_match:
+        json_str = json_match.group(0)
+        try:
+            response_json = json.loads(json_str)
+            if response_json.get("action") == "create_request" and response_json.get("ready"):
+                # Extract data and create request
+                data = response_json.get("data", {})
+                
+                # Parse reminder frequency
+                from app.models.request import ReminderFrequency
+                reminder_freq = data.get("reminder_frequency", "never")
+                try:
+                    reminder_frequency = ReminderFrequency(reminder_freq)
+                except ValueError:
+                    reminder_frequency = ReminderFrequency.NEVER
+                
+                # For INCOMING requests, auto-assign first email connection if not specified
+                email_connection_id_to_use = data.get("email_connection_id")
+                if not email_connection_id_to_use and data.get("type") == "incoming":
+                    # Get first available email connection for this user
+                    if email_connections and len(email_connections) > 0:
+                        email_connection_id_to_use = email_connections[0].id
+                        print(f"✅ Auto-assigned email connection {email_connections[0].email_address} for incoming request")
+                
+                # Create the request
+                request_create = Request(
+                    title=data.get("title"),
+                    description=data.get("description"),
+                    type=RequestType(data.get("type")),
+                    priority=RequestPriority(data.get("priority", "medium")),
+                    status=RequestStatus.PENDING,
+                    client_id=data.get("client_id"),
+                    user_id=current_user.id,
+                    due_date=datetime.fromisoformat(data.get("due_date")) if data.get("due_date") else None,
+                    email_connection_id=email_connection_id_to_use,
+                    reminder_enabled=data.get("reminder_enabled", False),
+                    reminder_frequency=reminder_frequency
+                )
+                
+                db.add(request_create)
+                db.commit()
+                db.refresh(request_create)
+                
+                # For INCOMING requests, auto-generate draft response using RAG
+                if request_create.type == RequestType.INCOMING:
+                    try:
+                        from app.services.ai_agent_service import AIAgentService
+                        
+                        # Get client for draft generation
+                        client_obj = db.query(Client).filter(Client.id == request_create.client_id).first()
+                        
+                        if client_obj:
+                            # Create pseudo-email for draft generation
+                            class PseudoEmail:
+                                def __init__(self, request):
+                                    self.subject = request.title
+                                    self.body = request.description
+                                    self.anonymized_body = request.description  # No PII in chat-created requests
+                            
+                            agent_service = AIAgentService(db)
+                            draft = agent_service._generate_draft_response(
+                                email=PseudoEmail(request_create),
+                                client=client_obj,
+                                user_id=current_user.id
+                            )
+                            
+                            request_create.draft_response = draft
+                            request_create.draft_generated_at = datetime.now(timezone.utc)
+                            db.commit()
+                            
+                            print(f"✅ Auto-generated draft response for incoming request {request_create.id}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to auto-generate draft: {str(e)}")
+                        # Continue anyway - request is created, just without draft
+                
+                return {
+                    "type": "request_created",
+                    "message": f"✅ Perfect! I've created the request '{request_create.title}' (ID: {request_create.id})",
+                    "request_id": request_create.id,
+                    "ready": True,
+                    "has_draft": request_create.draft_response is not None if request_create.type == RequestType.INCOMING else False
+                }
+        except json.JSONDecodeError:
+            # Failed to parse JSON
+            print(f"⚠️ Failed to parse JSON from AI response: {json_str}")
+            pass
+    
+    # If we reach here, it's a normal conversational response (not a JSON)
+    
+    # Update extracted data by parsing assistant's understanding
+    # (This is optional - you could also ask the AI to return structured data)
+    
+    return {
+        "type": "conversation",
+        "message": assistant_message,
+        "ready": False
     }

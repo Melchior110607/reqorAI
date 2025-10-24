@@ -145,7 +145,7 @@ export default function ReminderConfig({ requestId, initialConfig, onUpdate }: R
                 value={customMessage}
                 onChange={(e) => setCustomMessage(e.target.value)}
                 rows={3}
-                placeholder="Leave empty for AI-generated message..."
+                placeholder="Enter your reminder message..."
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
