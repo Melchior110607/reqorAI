@@ -352,9 +352,10 @@ class GmailService:
         connection: EmailConnection, 
         to_email: str, 
         subject: str, 
-        body: str
+        body: str,
+        attachments: list = None
     ) -> Dict[str, Any]:
-        """Send email via Gmail API"""
+        """Send email via Gmail API with optional attachments"""
         try:
             credentials = Credentials(
                 token=connection.access_token,
@@ -373,11 +374,44 @@ class GmailService:
             
             service = build('gmail', 'v1', credentials=credentials)
             
-            # Create message
+            # Create message with attachments support
             from email.mime.text import MIMEText
-            message = MIMEText(body)
-            message['to'] = to_email
-            message['subject'] = subject
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.base import MIMEBase
+            from email import encoders
+            import os
+            
+            if attachments and len(attachments) > 0:
+                # Use MIMEMultipart for attachments
+                message = MIMEMultipart()
+                message['to'] = to_email
+                message['subject'] = subject
+                
+                # Add body
+                message.attach(MIMEText(body, 'plain'))
+                
+                # Add attachments
+                for attachment_info in attachments:
+                    file_path = attachment_info['path']
+                    filename = attachment_info['filename']
+                    
+                    with open(file_path, 'rb') as f:
+                        part = MIMEBase('application', 'octet-stream')
+                        part.set_payload(f.read())
+                    
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        'Content-Disposition',
+                        f'attachment; filename= {filename}'
+                    )
+                    message.attach(part)
+                
+                print(f"📎 Added {len(attachments)} attachment(s) to email")
+            else:
+                # Simple text message
+                message = MIMEText(body)
+                message['to'] = to_email
+                message['subject'] = subject
             
             # Encode message
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()

@@ -25,7 +25,11 @@ import {
   MessageSquare,
   CheckCircle2,
   Bell,
-  AlertTriangle
+  AlertTriangle,
+  Paperclip,
+  Upload,
+  FileText,
+  Trash2
 } from 'lucide-react';
 
 export default function RequestDetailPage() {
@@ -49,6 +53,10 @@ export default function RequestDetailPage() {
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
   const [showTypingEffect, setShowTypingEffect] = useState(false);
+  
+  // For attachments (files to send to client)
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   
   // For follow-up modal
   const [followUpModalOpen, setFollowUpModalOpen] = useState(false);
@@ -103,6 +111,50 @@ export default function RequestDetailPage() {
     } finally {
       setLoadingFollowUps(false);
     }
+  };
+
+  // File attachment handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    setAttachments(prev => [...prev, ...files]);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const files = Array.from(e.target.files);
+      setAttachments(prev => [...prev, ...files]);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const handleQuickStatusChange = async (newStatus: string) => {
@@ -190,14 +242,19 @@ export default function RequestDetailPage() {
   const handleSendDraft = async () => {
     if (!request) return;
     
-    if (!confirm('Send this response to the client?')) {
+    const attachmentText = attachments.length > 0 
+      ? ` with ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` 
+      : '';
+    
+    if (!confirm(`Send this response to the client${attachmentText}?`)) {
       return;
     }
     
     setSending(true);
     try {
-      const result = await requestsAPI.sendDraftResponse(request.id);
+      const result = await requestsAPI.sendDraftResponse(request.id, attachments);
       alert(`✅ Email sent to ${result.to} via ${result.provider}!`);
+      setAttachments([]); // Clear attachments after sending
       fetchRequest(); // Refresh to show updated status
     } catch (error: any) {
       console.error('Error sending draft:', error);
@@ -448,6 +505,72 @@ export default function RequestDetailPage() {
                       )}
                     </div>
 
+                  {/* Attachments Section */}
+                  <div className="space-y-3">
+                    <label className="block text-sm font-medium text-gray-700">
+                      <Paperclip className="w-4 h-4 inline mr-1" />
+                      Attachments (optional)
+                    </label>
+                    
+                    {/* Drag & Drop Zone */}
+                    <div
+                      onDragEnter={handleDragEnter}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                        isDragging 
+                          ? 'border-blue-500 bg-blue-50' 
+                          : 'border-gray-300 bg-gray-50 hover:border-gray-400'
+                      }`}
+                    >
+                      <Upload className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                      <p className="text-sm text-gray-600 mb-2">
+                        Drag & drop files here, or click to browse
+                      </p>
+                      <input
+                        type="file"
+                        multiple
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        id="file-upload"
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className="inline-block px-4 py-2 text-sm bg-white border border-gray-300 rounded-md cursor-pointer hover:bg-gray-50 text-gray-900"
+                      >
+                        Choose Files
+                      </label>
+                    </div>
+
+                    {/* Attachment Preview List */}
+                    {attachments.length > 0 && (
+                      <div className="space-y-2">
+                        {attachments.map((file, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg"
+                          >
+                            <div className="flex items-center space-x-3">
+                              <FileText className="w-5 h-5 text-blue-500" />
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                                <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => removeAttachment(index)}
+                              className="text-red-500 hover:text-red-700 transition-colors"
+                              title="Remove attachment"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {request.draft_generated_at && (
                     <p className="text-xs text-gray-500">
                       Generated: {new Date(request.draft_generated_at).toLocaleString()}
@@ -470,7 +593,7 @@ export default function RequestDetailPage() {
                       className="bg-green-600 hover:bg-green-700"
                     >
                         <Send className="w-4 h-4 mr-2" />
-                      {sending ? 'Sending...' : 'Send Response to Client'}
+                      {sending ? 'Sending...' : `Send Response to Client${attachments.length > 0 ? ` (${attachments.length} attachment${attachments.length > 1 ? 's' : ''})` : ''}`}
                       </Button>
                   </div>
                 </div>

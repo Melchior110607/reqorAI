@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List, Optional
@@ -437,13 +437,16 @@ def regenerate_draft_response(
 @router.post("/{request_id}/send-draft")
 def send_draft_response(
     request_id: int,
+    attachments: List[UploadFile] = File(default=[]),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Send the draft response email"""
+    """Send the draft response email with optional attachments"""
     from app.models.email_connection import EmailConnection
     from app.services.gmail_service import GmailService
     from app.services.outlook_service import OutlookService
+    import tempfile
+    import os as os_module
     
     # Get request
     request = db.query(Request).filter(
@@ -492,6 +495,22 @@ def send_draft_response(
         )
     
     try:
+        # Process attachments if any
+        temp_files = []
+        attachment_paths = []
+        
+        if attachments:
+            for attachment in attachments:
+                # Create a temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{attachment.filename}") as tmp:
+                    contents = attachment.file.read()
+                    tmp.write(contents)
+                    temp_files.append(tmp.name)
+                    attachment_paths.append({
+                        'path': tmp.name,
+                        'filename': attachment.filename
+                    })
+        
         # Send email based on provider
         if connection.provider.value == "gmail":
             gmail_service = GmailService(db)
@@ -499,7 +518,8 @@ def send_draft_response(
                 connection=connection,
                 to_email=client.email,
                 subject=f"Re: {request.title}",
-                body=request.draft_response
+                body=request.draft_response,
+                attachments=attachment_paths if attachment_paths else None
             )
         elif connection.provider.value == "outlook":
             outlook_service = OutlookService(db)
@@ -507,13 +527,21 @@ def send_draft_response(
                 connection=connection,
                 to_email=client.email,
                 subject=f"Re: {request.title}",
-                body=request.draft_response
+                body=request.draft_response,
+                attachments=attachment_paths if attachment_paths else None
             )
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported provider: {connection.provider}"
             )
+        
+        # Clean up temporary files
+        for temp_file in temp_files:
+            try:
+                os_module.unlink(temp_file)
+            except Exception as e:
+                print(f"Warning: Could not delete temp file {temp_file}: {str(e)}")
         
         # Update request status
         request.status = RequestStatus.COMPLETED
@@ -523,10 +551,18 @@ def send_draft_response(
             "success": True,
             "message": "Email sent successfully",
             "provider": connection.provider.value,
-            "to": client.email
+            "to": client.email,
+            "attachments_count": len(attachment_paths)
         }
         
     except Exception as e:
+        # Clean up temporary files in case of error
+        for temp_file in temp_files:
+            try:
+                os_module.unlink(temp_file)
+            except:
+                pass
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send email: {str(e)}"

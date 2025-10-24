@@ -123,9 +123,25 @@ export const requestsAPI = {
     return response.data;
   },
 
-  sendDraftResponse: async (requestId: number): Promise<any> => {
-    const response = await api.post(`/requests/${requestId}/send-draft`);
-    return response.data;
+  sendDraftResponse: async (requestId: number, attachments?: File[]): Promise<any> => {
+    if (attachments && attachments.length > 0) {
+      // If we have attachments, use FormData
+      const formData = new FormData();
+      attachments.forEach(file => {
+        formData.append('attachments', file);
+      });
+      
+      const response = await api.post(`/requests/${requestId}/send-draft`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
+    } else {
+      // No attachments, regular POST
+      const response = await api.post(`/requests/${requestId}/send-draft`);
+      return response.data;
+    }
   },
 
   configureReminder: async (requestId: number, config: {

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 import openai
 from PyPDF2 import PdfReader
 from docx import Document as DocxDocument
+from openpyxl import load_workbook
 
 from app.models.knowledge_base import KnowledgeDocument
 from app.models.knowledge_chunk import KnowledgeChunk
@@ -92,6 +93,20 @@ class RAGService:
         elif file_path.endswith('.txt'):
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
+        elif file_path.endswith(('.xlsx', '.xls')):
+            # Extract text from Excel files
+            text = ""
+            workbook = load_workbook(filename=file_path, read_only=True, data_only=True)
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                text += f"\n\n=== Sheet: {sheet_name} ===\n\n"
+                for row in sheet.iter_rows(values_only=True):
+                    row_values = [str(cell) if cell is not None else '' for cell in row]
+                    row_text = '\t'.join(row_values).strip()
+                    if row_text:
+                        text += row_text + "\n"
+            workbook.close()
+            return text
         else:
             raise ValueError(f"Unsupported file type: {file_path}")
     

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import PyPDF2
 import docx
+from openpyxl import load_workbook
 
 from app.database.config import get_db, settings
 from app.models.user import User
@@ -58,6 +59,32 @@ def extract_text_from_txt(file_path: str) -> str:
         return ""
 
 
+def extract_text_from_excel(file_path: str) -> str:
+    """Extract text from Excel file (.xlsx, .xls)"""
+    text = ""
+    try:
+        workbook = load_workbook(filename=file_path, read_only=True, data_only=True)
+        
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            text += f"\n\n=== Sheet: {sheet_name} ===\n\n"
+            
+            # Get all rows
+            for row in sheet.iter_rows(values_only=True):
+                # Filter out None values and convert to string
+                row_values = [str(cell) if cell is not None else '' for cell in row]
+                # Join with tab separator and add to text
+                row_text = '\t'.join(row_values).strip()
+                if row_text:  # Only add non-empty rows
+                    text += row_text + "\n"
+        
+        workbook.close()
+    except Exception as e:
+        print(f"Error extracting Excel text: {str(e)}")
+    
+    return text
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -67,7 +94,7 @@ async def upload_document(
     """Upload document for RAG knowledge base with intelligent chunking"""
     
     # Check file type
-    allowed_extensions = ['.pdf', '.docx', '.txt']
+    allowed_extensions = ['.pdf', '.docx', '.txt', '.xlsx', '.xls']
     file_ext = os.path.splitext(file.filename)[1].lower()
     
     if file_ext not in allowed_extensions:

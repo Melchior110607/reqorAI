@@ -301,9 +301,10 @@ class OutlookService:
         connection: EmailConnection, 
         to_email: str, 
         subject: str, 
-        body: str
+        body: str,
+        attachments: list = None
     ) -> Dict[str, Any]:
-        """Send email via Microsoft Graph API"""
+        """Send email via Microsoft Graph API with optional attachments"""
         try:
             headers = {
                 'Authorization': f'Bearer {connection.access_token}',
@@ -328,6 +329,27 @@ class OutlookService:
                 },
                 "saveToSentItems": "true"
             }
+            
+            # Add attachments if provided
+            if attachments and len(attachments) > 0:
+                import base64
+                message_payload["message"]["attachments"] = []
+                
+                for attachment_info in attachments:
+                    file_path = attachment_info['path']
+                    filename = attachment_info['filename']
+                    
+                    with open(file_path, 'rb') as f:
+                        file_content = f.read()
+                        encoded_content = base64.b64encode(file_content).decode('utf-8')
+                    
+                    message_payload["message"]["attachments"].append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": filename,
+                        "contentBytes": encoded_content
+                    })
+                
+                print(f"📎 Added {len(attachments)} attachment(s) to email")
             
             # Send message
             response = requests.post(
